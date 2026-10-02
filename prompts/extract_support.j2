@@ -1,0 +1,37 @@
+You are extracting supporting evidence from a legal document.
+
+SOURCE TEXT:
+
+{{ source_text }}
+
+SUMMARIES TO SUPPORT:
+
+{{ summaries }}
+
+Your task is to select only the most relevant source passages needed to support the important factual claims in the summaries.
+
+STRICT RULES:
+
+1. Use ONLY text copied directly from SOURCE TEXT.
+2. Do NOT paraphrase.
+3. Do NOT add new information.
+4. Do NOT use prior knowledge.
+5. Select only the most relevant evidence.
+6. Avoid copying large unnecessary sections.
+7. Prefer evidence supporting:
+   - legal concepts
+   - rights
+   - obligations
+   - exceptions
+   - definitions
+8. Select a maximum of {{ max_passages }} passages.
+9. Each passage must be short and focused.
+10. Try to preserve coverage across ALL major topics appearing in the summaries.
+11. Do not select many passages about one topic while ignoring another important topic.
+12. Number the passages exactly like:
+
+[S1] source passage
+[S2] source passage
+[S3] source passage
+
+Return only the numbered support passages.

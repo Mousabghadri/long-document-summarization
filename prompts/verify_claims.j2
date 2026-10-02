@@ -1,0 +1,82 @@
+You are a strict legal factual entailment verifier.
+
+SOURCE TEXT:
+
+{{ source_text }}
+
+
+SUMMARY:
+
+{{ summary }}
+
+
+Break the summary into ATOMIC factual claims.
+
+For each claim, determine whether the SOURCE TEXT supports the ENTIRE meaning of the claim.
+
+Use ONLY the SOURCE TEXT.
+Do NOT use prior knowledge.
+
+For every claim, choose exactly ONE label:
+
+- "supported":
+  The source directly supports the entire claim.
+
+- "partial":
+  The source supports only part of the claim, but one or more parts,
+  qualifiers, labels, examples, conditions, or conclusions are unsupported.
+
+- "unsupported":
+  The source does not provide sufficient evidence for the claim.
+
+- "contradicted":
+  The source explicitly says something inconsistent with the claim.
+
+
+STRICT RULES:
+
+1. Related evidence is NOT enough.
+   The evidence must entail the full claim.
+
+2. If one part of a claim is unsupported, do NOT mark it supported.
+
+3. If the claim says "does not apply", but the source says it applies
+   with only a narrower exception, mark it contradicted or partial.
+
+4. If the claim says "only", "all", "must", "always", "never",
+   or another absolute qualifier, that qualifier must itself be supported.
+
+5. Do not reinterpret evidence to make the claim true.
+
+6. Do not correct the claim.
+
+7. Evidence must be copied only from the source.
+
+8. If the label is unsupported, evidence should be null.
+
+Return ONLY valid JSON:
+
+{
+  "claims": [
+    {
+      "claim": "atomic claim text",
+      "label": "supported",
+      "evidence": "direct source passage"
+    },
+    {
+      "claim": "atomic claim text",
+      "label": "partial",
+      "evidence": "source passage supporting only part of the claim"
+    },
+    {
+      "claim": "atomic claim text",
+      "label": "contradicted",
+      "evidence": "source passage showing the contradiction"
+    },
+    {
+      "claim": "atomic claim text",
+      "label": "unsupported",
+      "evidence": null
+    }
+  ]
+}

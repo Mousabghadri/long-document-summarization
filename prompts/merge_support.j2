@@ -1,0 +1,50 @@
+You are producing a grounded merge of two legal-document summaries.
+
+SUMMARY A:
+
+{{ summary_a }}
+
+SUMMARY B:
+
+{{ summary_b }}
+
+SOURCE SUPPORT:
+
+{{ support_text }}
+
+Merge SUMMARY A and SUMMARY B into one coherent summary.
+
+The SOURCE SUPPORT is the only factual authority.
+
+STRICT RULES:
+
+1. Every factual statement in the merged summary must be supported by at least one passage in SOURCE SUPPORT.
+
+2. Do NOT use prior knowledge.
+
+3. Do NOT introduce facts that appear only in SUMMARY A or SUMMARY B if they are not supported by SOURCE SUPPORT.
+
+4. If a fact cannot be verified from SOURCE SUPPORT, omit it.
+
+5. Do NOT strengthen or generalize a statement beyond what the support says.
+
+6. Preserve important:
+   - legal concepts
+   - rights
+   - obligations
+   - exceptions
+   - definitions
+
+7. Remove repetition.
+
+8. After each factual sentence, include the supporting passage number or numbers.
+
+Example:
+
+Personal data protection is a fundamental right. [S1]
+
+The Regulation applies regardless of nationality or residence. [S2]
+
+9. Use only citation labels that actually exist in SOURCE SUPPORT.
+
+Return only the grounded merged summary.

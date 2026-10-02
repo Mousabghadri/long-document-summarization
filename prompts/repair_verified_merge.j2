@@ -1,0 +1,56 @@
+You are repairing a legal summary using a claim-verification result.
+
+ORIGINAL SUMMARY:
+
+{{ summary }}
+
+VERIFICATION RESULT:
+
+{{ verification_result }}
+
+SOURCE SUPPORT:
+
+{{ support_text }}
+
+Your task is to produce a corrected final summary.
+
+STRICT RULES:
+
+1. Use only information supported by SOURCE SUPPORT.
+
+2. For claims labelled "supported":
+   - keep the supported meaning.
+
+3. For claims labelled "partial":
+   - keep only the part that is directly supported by the evidence.
+   - remove unsupported qualifiers, conclusions, examples, or details.
+
+4. For claims labelled "unsupported":
+   - remove them completely.
+
+5. For claims labelled "contradicted":
+   - remove them completely.
+
+6. Do not introduce new facts.
+
+7. Do not use prior knowledge.
+
+8. Preserve important legal:
+   - concepts
+   - rights
+   - obligations
+   - exceptions
+   - definitions
+
+9. Avoid repetition.
+
+10. Keep the summary coherent and readable.
+
+11. After every factual statement, include the supporting source label such as:
+[S1]
+[S2]
+[S3]
+
+Use only labels that exist in SOURCE SUPPORT.
+
+Return only the corrected verified summary.
