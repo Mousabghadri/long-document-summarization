@@ -1,0 +1,60 @@
+You are evaluating an output generated from a source document.
+
+SOURCE TEXT:
+
+{{ source_text }}
+
+OUTPUT:
+
+{{ output_text }}
+
+Evaluate the output on three dimensions.
+
+1. FAITHFULNESS
+How well is the information in the output supported by the source text?
+
+Score:
+1 = many unsupported or incorrect statements
+2 = several unsupported statements
+3 = mostly supported with some problems
+4 = almost entirely supported
+5 = fully supported by the source
+
+2. COVERAGE
+How well does the output preserve the important information from the source?
+
+Score:
+1 = misses most important information
+2 = misses many important points
+3 = covers the main ideas but misses several important details
+4 = covers most important information
+5 = covers the important information very well
+
+3. COHERENCE
+How clear, logically connected, and readable is the output?
+
+Score:
+1 = very difficult to follow
+2 = poorly connected
+3 = understandable but with some issues
+4 = clear and coherent
+5 = very clear and well organized
+
+Use ONLY the source text when judging factual support and coverage.
+
+Return ONLY valid JSON:
+
+{
+  "faithfulness": {
+    "score": 1,
+    "reason": "short explanation"
+  },
+  "coverage": {
+    "score": 1,
+    "reason": "short explanation"
+  },
+  "coherence": {
+    "score": 1,
+    "reason": "short explanation"
+  }
+}

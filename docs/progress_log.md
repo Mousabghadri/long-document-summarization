@@ -12,3 +12,6 @@
 - Added claims extraction as a separate experimental approach.
 - Added claim verification using supported, partial, unsupported and contradicted labels.
 - Added storage of intermediate claims and verification outputs.
+- Added a unified evaluation script for Sequential, Key Sentences and Claims.
+- Added initial quality evaluation using faithfulness, coverage and coherence.
+- Initial results showed high faithfulness across all three approaches, while coverage remains the main limitation.

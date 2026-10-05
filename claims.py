@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import time
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -120,6 +121,14 @@ os.makedirs(
 
 
 # ============================================================
+# START MEASUREMENT
+# ============================================================
+
+start_time = time.time()
+model_calls = 0
+
+
+# ============================================================
 # PROCESS CHUNKS
 # ============================================================
 
@@ -146,8 +155,12 @@ for i, chunk in enumerate(
         extract_prompt
     )
 
+    model_calls += 1
 
-    # Save raw extraction output
+
+    # ========================================================
+    # SAVE RAW EXTRACTION
+    # ========================================================
 
     raw_extract_path = os.path.join(
         raw_dir,
@@ -159,12 +172,15 @@ for i, chunk in enumerate(
         "w",
         encoding="utf-8"
     ) as f:
+
         f.write(
             extract_result
         )
 
 
-    # Parse extracted claims
+    # ========================================================
+    # PARSE EXTRACTED CLAIMS
+    # ========================================================
 
     try:
 
@@ -192,7 +208,9 @@ for i, chunk in enumerate(
     )
 
 
-    # Save extracted claims
+    # ========================================================
+    # SAVE EXTRACTED CLAIMS
+    # ========================================================
 
     extracted_path = os.path.join(
         extracted_dir,
@@ -230,8 +248,12 @@ for i, chunk in enumerate(
         verify_prompt
     )
 
+    model_calls += 1
 
-    # Save raw verification output
+
+    # ========================================================
+    # SAVE RAW VERIFICATION
+    # ========================================================
 
     raw_verify_path = os.path.join(
         raw_dir,
@@ -249,7 +271,9 @@ for i, chunk in enumerate(
         )
 
 
-    # Parse verification JSON
+    # ========================================================
+    # PARSE VERIFICATION
+    # ========================================================
 
     try:
 
@@ -347,3 +371,21 @@ for i, chunk in enumerate(
         "Saved extracted and verified claims for chunk",
         i
     )
+
+
+# ============================================================
+# END MEASUREMENT
+# ============================================================
+
+end_time = time.time()
+
+runtime = end_time - start_time
+
+print(
+    f"\nTotal runtime: {runtime:.2f} seconds"
+)
+
+print(
+    "Model calls:",
+    model_calls
+)

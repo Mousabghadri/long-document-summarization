@@ -1,4 +1,7 @@
 import argparse
+import json
+import os
+import time
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -38,11 +41,22 @@ parser.add_argument(
     help="Maximum number of source tokens sent to the model at a time"
 )
 
+parser.add_argument(
+    "--max-chunks",
+    type=int,
+    default=None,
+    help="Maximum number of chunks to process"
+)
+
 args = parser.parse_args()
+
 
 SUMMARY_SIZE = args.summary_size
 CONTEXT_SIZE = args.context_size
-SUMMARY_LENGTH_WORDS = int(SUMMARY_SIZE * 0.75)
+
+SUMMARY_LENGTH_WORDS = int(
+    SUMMARY_SIZE * 0.75
+)
 
 
 # ============================================================
@@ -63,14 +77,26 @@ chunks = chunk_document(
     max_tokens=CONTEXT_SIZE
 )
 
+original_chunk_count = len(chunks)
+
+if args.max_chunks is not None:
+    chunks = chunks[:args.max_chunks]
+
 if not chunks:
     raise ValueError(
         "No chunks were created from the document."
     )
 
-print("Total chunks:", len(chunks))
+
+print("Document chunks:", original_chunk_count)
+print("Processing chunks:", len(chunks))
 print("Context size:", CONTEXT_SIZE, "tokens")
 print("Target summary size:", SUMMARY_SIZE, "tokens")
+print(
+    "Prompt summary length:",
+    SUMMARY_LENGTH_WORDS,
+    "words"
+)
 
 
 # ============================================================
@@ -95,12 +121,22 @@ compress_template = env.get_template(
 
 
 # ============================================================
+# START MEASUREMENT
+# ============================================================
+
+start_time = time.time()
+model_calls = 0
+
+
+# ============================================================
 # HELPER: COMPRESS SUMMARY
 # ============================================================
+
 def compress_to_target(
     summary,
     label="Summary"
 ):
+    global model_calls
 
     max_compression_attempts = 5
     attempt = 0
@@ -112,15 +148,8 @@ def compress_to_target(
 
         attempt += 1
 
-        current_tokens = count_tokens(summary)
-
-        target_words = int(SUMMARY_SIZE * 0.75)
-
-        compression_percentage = max(
-            10,
-            int(
-                (SUMMARY_SIZE / current_tokens) * 100
-            )
+        current_tokens = count_tokens(
+            summary
         )
 
         print(
@@ -130,18 +159,19 @@ def compress_to_target(
 
         print(
             f"Current tokens: {current_tokens} | "
-            f"Target: {SUMMARY_SIZE} | "
-            f"Target ratio: {compression_percentage}%"
+            f"Target: {SUMMARY_SIZE}"
         )
 
         compress_prompt = compress_template.render(
-    summary=summary,
-    summary_length=SUMMARY_LENGTH_WORDS
-)
+            summary=summary,
+            summary_length=SUMMARY_LENGTH_WORDS
+        )
 
         summary = generate_summary(
             compress_prompt
         )
+
+        model_calls += 1
 
         if summary is None:
             raise RuntimeError(
@@ -153,25 +183,32 @@ def compress_to_target(
             count_tokens(summary)
         )
 
-    # Hard fallback if the model still exceeds the limit
+
+    # ========================================================
+    # SENTENCE-SAFE HARD FALLBACK
+    # ========================================================
+
     if count_tokens(summary) > SUMMARY_SIZE:
 
-     print(
-        f"Hard truncation applied at complete sentence: "
-        f"{count_tokens(summary)} -> <= {SUMMARY_SIZE} tokens"
-     )
+        print(
+            f"Hard truncation applied at complete sentence: "
+            f"{count_tokens(summary)} "
+            f"-> <= {SUMMARY_SIZE} tokens"
+        )
 
-     summary = truncate_to_complete_sentence(
-        summary,
-        SUMMARY_SIZE
-     )
+        summary = truncate_to_complete_sentence(
+            summary,
+            SUMMARY_SIZE
+        )
 
-     print(
-        "Tokens after sentence-safe truncation:",
-        count_tokens(summary)
-     )
+        print(
+            "Tokens after sentence-safe truncation:",
+            count_tokens(summary)
+        )
 
     return summary
+
+
 # ============================================================
 # FIRST CHUNK
 # ============================================================
@@ -184,6 +221,8 @@ first_prompt = summarize_template.render(
 current_summary = generate_summary(
     first_prompt
 )
+
+model_calls += 1
 
 if current_summary is None:
     raise RuntimeError(
@@ -224,12 +263,15 @@ for i, chunk in enumerate(
     update_prompt = update_template.render(
         current_summary=current_summary,
         chunk=chunk,
-        target_tokens=SUMMARY_SIZE
+        target_tokens=SUMMARY_SIZE,
+        summary_length=SUMMARY_LENGTH_WORDS
     )
 
     current_summary = generate_summary(
         update_prompt
     )
+
+    model_calls += 1
 
     if current_summary is None:
         raise RuntimeError(
@@ -261,7 +303,76 @@ print("=" * 80)
 
 print(current_summary)
 
+final_summary_tokens = count_tokens(
+    current_summary
+)
+
 print(
     "\nFinal summary tokens:",
-    count_tokens(current_summary)
+    final_summary_tokens
+)
+
+
+# ============================================================
+# END MEASUREMENT
+# ============================================================
+
+end_time = time.time()
+
+runtime = end_time - start_time
+
+print(
+    f"\nTotal runtime: {runtime:.2f} seconds"
+)
+
+print(
+    "Model calls:",
+    model_calls
+)
+
+
+# ============================================================
+# SAVE SEQUENTIAL OUTPUT
+# ============================================================
+
+output_dir = "outputs/sequential"
+
+os.makedirs(
+    output_dir,
+    exist_ok=True
+)
+
+output_data = {
+    "summary_size_target": SUMMARY_SIZE,
+    "summary_length_words": SUMMARY_LENGTH_WORDS,
+    "context_size": CONTEXT_SIZE,
+    "document_total_chunks": original_chunk_count,
+    "processed_chunks": len(chunks),
+    "final_summary_tokens": final_summary_tokens,
+    "runtime_seconds": runtime,
+    "model_calls": model_calls,
+    "final_summary": current_summary
+}
+
+output_path = os.path.join(
+    output_dir,
+    "result.json"
+)
+
+with open(
+    output_path,
+    "w",
+    encoding="utf-8"
+) as f:
+
+    json.dump(
+        output_data,
+        f,
+        indent=2,
+        ensure_ascii=False
+    )
+
+print(
+    "\nSequential result saved:",
+    output_path
 )

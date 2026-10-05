@@ -1,6 +1,7 @@
 import argparse
 import os
 import re
+import time
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -128,6 +129,14 @@ os.makedirs(
 
 
 # ============================================================
+# START MEASUREMENT
+# ============================================================
+
+start_time = time.time()
+model_calls = 0
+
+
+# ============================================================
 # PROCESS CHUNKS
 # ============================================================
 
@@ -148,6 +157,8 @@ for i, chunk in enumerate(
     result = generate_summary(
         prompt
     )
+
+    model_calls += 1
 
 
     # ========================================================
@@ -275,8 +286,25 @@ for i, chunk in enumerate(
                 sentence + "\n"
             )
 
-
     print(
         "Saved intermediate outputs for chunk",
         i
     )
+
+
+# ============================================================
+# END MEASUREMENT
+# ============================================================
+
+end_time = time.time()
+
+runtime = end_time - start_time
+
+print(
+    f"\nTotal runtime: {runtime:.2f} seconds"
+)
+
+print(
+    "Model calls:",
+    model_calls
+)
