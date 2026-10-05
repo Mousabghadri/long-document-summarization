@@ -23,3 +23,24 @@ The first 4 chunks were processed with the same pipeline.
 The pipeline worked successfully on a document different from the GDPR.
 
 A remaining issue is coverage loss during the final merge.
+
+## Sequential Summarization Parameters
+
+The sequential summarization pipeline now supports configurable parameters:
+
+- summary size
+- context size
+
+The summary size controls the target length of intermediate and final summaries.
+
+The context size controls how many source tokens are processed at a time.
+
+Example experiments on the EU AI Act:
+
+| Context Size | Summary Size | Number of Chunks |
+|---:|---:|---:|
+| 2000 | 500 | 87 |
+| 4000 | 500 | 35 |
+| 8000 | 500 | 16 |
+
+The summary length is controlled using prompt instructions, compression, and sentence-safe truncation when necessary.
