@@ -13,6 +13,39 @@ def count_tokens(text: str) -> int:
         encoding.encode(text)
     )
 
+def truncate_to_complete_sentence(
+    text: str,
+    max_tokens: int
+) -> str:
+
+    if count_tokens(text) <= max_tokens:
+        return text
+
+    sentences = re.split(
+        r"(?<=[.!?])\s+",
+        text
+    )
+
+    kept_sentences = []
+
+    for sentence in sentences:
+
+        candidate = " ".join(
+            kept_sentences + [sentence]
+        )
+
+        if count_tokens(candidate) <= max_tokens:
+            kept_sentences.append(sentence)
+        else:
+            break
+
+    if kept_sentences:
+        return " ".join(kept_sentences)
+
+    # Fallback if even the first sentence is too long
+    tokens = encoding.encode(text)[:max_tokens]
+
+    return encoding.decode(tokens)
 
 def split_long_paragraph(
     paragraph: str,
@@ -168,3 +201,17 @@ def chunk_document(
         )
 
     return chunks
+def truncate_to_tokens(
+    text: str,
+    max_tokens: int
+) -> str:
+    tokens = encoding.encode(text)
+
+    if len(tokens) <= max_tokens:
+        return text
+
+    truncated_tokens = tokens[:max_tokens]
+
+    return encoding.decode(
+        truncated_tokens
+    )

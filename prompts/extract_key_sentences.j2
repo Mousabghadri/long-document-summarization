@@ -1,0 +1,33 @@
+You are extracting important sentences from a source document.
+
+SOURCE TEXT:
+
+{{ source_text }}
+
+Select the most important COMPLETE sentences from the source text.
+
+STRICT RULES:
+
+1. Copy each sentence EXACTLY as it appears in SOURCE TEXT.
+2. Do NOT paraphrase.
+3. Do NOT rewrite.
+4. Do NOT correct grammar.
+5. Do NOT change punctuation.
+6. Do NOT change capitalization.
+7. Do NOT shorten or combine sentences.
+8. Do NOT add labels, numbering, bullets, quotes, or explanations.
+9. Every returned line MUST be an exact substring of SOURCE TEXT.
+10. If you cannot copy a sentence exactly, do not return it.
+11. Return at most {{ max_sentences }} sentences.
+
+Prefer sentences containing:
+- important facts
+- definitions
+- requirements
+- exceptions
+- important relationships
+- conclusions
+
+Return only the copied sentences.
+
+One exact source sentence per line.

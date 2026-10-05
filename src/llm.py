@@ -13,6 +13,7 @@ MODEL_NAME = os.getenv("MODEL_NAME")
 
 
 def generate_summary(prompt: str) -> str:
+
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
@@ -23,4 +24,11 @@ def generate_summary(prompt: str) -> str:
         ]
     )
 
-    return response.choices[0].message.content
+    content = response.choices[0].message.content
+
+    if content is None:
+        raise RuntimeError(
+            "The model returned no text content."
+        )
+
+    return content

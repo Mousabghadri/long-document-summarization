@@ -1,0 +1,25 @@
+You are extracting factual claims from a source document.
+
+SOURCE TEXT:
+
+{{ source_text }}
+
+Extract the most important factual claims from the source text.
+
+Rules:
+- Each claim must contain only one main factual statement.
+- Keep claims short and specific.
+- Do not combine multiple independent facts into one claim.
+- Do not add information that is not in the source.
+- Do not use prior knowledge.
+- Return at most {{ max_claims }} claims.
+
+Return ONLY valid JSON:
+
+{
+  "claims": [
+    "claim 1",
+    "claim 2",
+    "claim 3"
+  ]
+}
