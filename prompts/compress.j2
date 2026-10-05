@@ -1,18 +1,20 @@
-You are compressing a running summary of a long document.
+You are compressing a summary of a long document.
 
 CURRENT SUMMARY:
 
 {{ summary }}
 
-Write at most {{ summary_length }} words.
+Rewrite the summary so that it is approximately {{ summary_length }} words.
 
-Keep only the highest-priority information.
+IMPORTANT LENGTH REQUIREMENT:
+- The final answer should be close to {{ summary_length }} words.
+- Do not exceed {{ summary_length }} words unless absolutely necessary.
+- Aggressively remove lower-priority information when needed to meet the target length.
 
-Preserve:
+Preserve only the most important:
 - core facts
 - main concepts
 - essential definitions
-- important relationships
 - important requirements
 - critical exceptions
 - major conclusions
@@ -20,16 +22,16 @@ Preserve:
 Remove:
 - examples unless essential
 - repeated information
-- detailed explanations
-- minor facts
-- background details
-- low-priority information
+- minor details
+- background explanations
 - redundant wording
+- secondary facts
+- unnecessary qualifications
+- long lists
 
-IMPORTANT:
+Rules:
 - Do not introduce new information.
 - Use only information already contained in the current summary.
 - Prefer concise sentences.
-- Avoid headings unless necessary.
-- Avoid long lists.
+- Merge related information where possible.
 - Return only the compressed summary.
