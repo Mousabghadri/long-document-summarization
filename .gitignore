@@ -6,4 +6,7 @@ __pycache__/
 
 data/*.pdf
 data/*.txt
-data/*.docxيلا
+data/*.docx
+outputs/
+deliverables/
+*.zip

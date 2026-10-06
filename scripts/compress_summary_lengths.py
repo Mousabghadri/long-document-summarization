@@ -6,7 +6,11 @@ import time
 from jinja2 import Environment, FileSystemLoader
 
 from src.llm import generate_summary
+import sys
+from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 # ============================================================
 # ARGUMENTS
