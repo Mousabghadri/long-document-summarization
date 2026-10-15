@@ -12,10 +12,10 @@ client = OpenAI(
 MODEL_NAME = os.getenv("MODEL_NAME")
 
 
-def generate_summary(prompt: str) -> str:
+def generate_summary(prompt: str, model_name: str = None) -> str:
 
     response = client.chat.completions.create(
-        model=MODEL_NAME,
+        model=model_name or MODEL_NAME,
         messages=[
             {
                 "role": "user",

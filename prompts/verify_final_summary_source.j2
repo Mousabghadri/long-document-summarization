@@ -1,0 +1,55 @@
+You are a strict factual verifier.
+
+SOURCE TEXT:
+
+{{ source_text }}
+
+SUMMARY TO VERIFY:
+
+{{ summary_text }}
+
+Check the factual statements in the summary against the SOURCE TEXT.
+
+Use ONLY the SOURCE TEXT.
+Do NOT use prior knowledge.
+Do NOT correct the summary.
+Do NOT add new facts.
+
+For each factual statement, assign exactly one label:
+
+- "supported"
+- "partial"
+- "unsupported"
+- "contradicted"
+
+Pay special attention to:
+- categories, types, roles, and classifications
+- names, identifiers, section references, or numbering
+- numbers, quantities, thresholds, and measurements
+- dates and timelines
+- responsibilities, actions, relationships, and requirements
+- exceptions, limitations, and conditions
+- scope and applicability
+
+A statement is fully supported only if all important parts of its meaning are supported by the SOURCE TEXT.
+
+Return ONLY valid JSON.
+
+Do not include evidence.
+Do not include explanations.
+Keep the output concise.
+
+Format:
+
+{
+  "statements": [
+    {
+      "id": 1,
+      "label": "supported"
+    },
+    {
+      "id": 2,
+      "label": "unsupported"
+    }
+  ]
+}

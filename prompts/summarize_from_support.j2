@@ -1,0 +1,29 @@
+You are writing a grounded summary of a long document.
+
+SUPPORTING SOURCE SENTENCES:
+
+{{ support_text }}
+
+{% if additional_instructions %}
+Additional instructions:
+{{ additional_instructions }}
+{% endif %}
+
+Write a clear and coherent summary of approximately {{ summary_length }} words.
+
+Rules:
+- Use only information contained in the supporting source sentences.
+- Do not use prior knowledge.
+- Do not invent information.
+- Combine related information into natural connected prose.
+- Remove repetition.
+- Preserve important facts, definitions, requirements, exceptions, relationships, and conclusions.
+- Do not simply copy the supporting sentences as a list.
+- Use plain text only.
+- Do not use Markdown.
+- Do not use tables.
+- Do not use Markdown headings such as #, ##, or ###.
+- Do not use bold or italic Markdown markers such as ** or *.
+- If structure is useful, use simple plain-text section titles and numbered lists.
+
+Return only the final summary.

@@ -1,0 +1,87 @@
+You are writing a grounded summary of a long document.
+
+{% if use_themes %}
+DOCUMENT-LEVEL THEMES:
+
+{{ document_themes }}
+{% endif %}
+
+SUPPORTED CLAIMS:
+
+{{ claims_text }}
+
+{% if additional_instructions %}
+Additional instructions:
+{{ additional_instructions }}
+{% endif %}
+
+Write a clear and coherent summary of AT MOST {{ summary_length }} words.
+
+STRICT GROUNDING RULES:
+
+1. Use ONLY information explicitly stated in the supported claims.
+{% if use_themes %}
+2. Use the document-level themes only to guide emphasis and organization.
+3. Do NOT add information from the themes unless it is also supported by the claims.
+{% endif %}
+4. Do NOT use prior knowledge.
+5. Do NOT add facts, numbers, dates, categories, exceptions, interpretations, examples, or relationships that are not explicitly present in the supported claims.
+6. Do NOT infer new relationships between claims unless they are directly stated.
+7. Do NOT change the scope, actor, subject, condition, exception, applicability, or meaning of any claim.
+8. Do NOT generalize a statement that applies to a specific actor, category, object, system, section, context, or condition into a broader statement.
+9. Preserve important exceptions, limitations, qualifiers, and conditions.
+10. If a detail is uncertain or not explicitly present in the claims, leave it out.
+
+COVERAGE AND EMPHASIS RULES:
+
+{% if use_themes %}
+11. Organize the summary around the major document-level themes.
+12. Give clear priority to the document's overall purpose, main topic, and major themes before detailed operational or procedural information.
+13. Aim to cover all major themes represented in the supported claims when the word budget allows.
+14. Do not spend excessive space on one detailed subsection while omitting other major topics.
+15. Prefer broad document-level coverage over minor procedural details.
+16. Include operational details only when they are important for understanding a major theme.
+17. Avoid letting background, examples, implementation details, or repeated contextual information dominate the summary.
+18. Remove repetition before removing unique major themes.
+
+- Begin with 1–2 concise sentences explaining the document's overall purpose, context, and main subject, when those are supported by the claims.
+- Cover the major document-level themes before expanding into detailed subtopics.
+- Keep the amount of detail reasonably balanced across major themes.
+- Do not let one narrow theme dominate the summary unless it clearly dominates the document itself.
+- Prefer representative details over exhaustive lists of procedures, requirements, examples, or sub-rules.
+
+{% else %}
+11. Give priority to the most important information represented in the supported claims.
+12. Aim for broad coverage of the supported claims when the word budget allows.
+13. Avoid excessive repetition.
+14. Do not let minor procedural details dominate the summary.
+15. Prefer representative details over exhaustive lists when compression is necessary.
+{% endif %}
+
+WRITING RULES:
+
+19. Combine closely related claims into natural connected prose only when doing so does not change their scope or meaning.
+20. Do not simply return a list of claims.
+21. Start with a concise high-level explanation of what the document is about when this is supported by the claims.
+22. Do not exceed {{ summary_length }} words.
+23. Use plain text only.
+24. Do not use Markdown.
+25. Do not use tables.
+26. Do not use Markdown headings such as #, ##, or ###.
+27. Do not use bold or italic Markdown markers such as ** or *.
+28. If structure is useful, use simple plain-text section titles or numbered lists.
+
+FINAL CHECK BEFORE ANSWERING:
+
+Verify that:
+- every statement is supported by at least one supplied claim;
+{% if use_themes %}
+- the summary reflects the main document-level themes rather than being dominated by local details;
+- major themes present in the supported claims have not been omitted without necessity;
+{% endif %}
+- responsibilities or actions assigned to different actors or entities have not been mixed;
+- statements that apply only to specific categories, sections, objects, systems, or contexts have not been generalized;
+- scope, conditions, exceptions, and qualifiers have not been changed;
+- no unsupported relationship between claims has been introduced.
+
+Return only the final summary.

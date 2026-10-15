@@ -1,30 +1,30 @@
 import argparse
 import os
 import re
+import sys
 import time
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from jinja2 import Environment, FileSystemLoader
 
 from src.document_loader import load_document
 from src.chunking import chunk_document
 from src.llm import generate_summary
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def normalize_text(text):
-    return re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def count_words(text):
+    return len(text.split())
 
 
 parser = argparse.ArgumentParser(
-    description="Extract validated key sentences from a full document"
+    description="Extract validated support sentences and generate a grounded summary"
 )
 
 parser.add_argument(
@@ -43,13 +43,27 @@ parser.add_argument(
     "--max-sentences",
     type=int,
     default=10,
-    help="Maximum key sentences per chunk"
+    help="Maximum support sentences per chunk"
+)
+
+parser.add_argument(
+    "--summary-words",
+    type=int,
+    default=2000,
+    help="Target final summary length in words"
 )
 
 parser.add_argument(
     "--output-name",
     required=True,
     help="Output name, e.g. ai_act or gdpr"
+)
+
+parser.add_argument(
+    "--additional-instructions",
+    type=str,
+    default="",
+    help="Optional extra instructions for summary focus"
 )
 
 args = parser.parse_args()
@@ -70,23 +84,28 @@ chunks = chunk_document(
 
 print("Total chunks:", len(chunks))
 print("Context size:", args.context_size)
+print("Target summary:", args.summary_words, "words")
 
 
 # ============================================================
-# LOAD PROMPT
+# LOAD PROMPTS
 # ============================================================
 
 env = Environment(
     loader=FileSystemLoader("prompts")
 )
 
-template = env.get_template(
+extract_template = env.get_template(
     "extract_key_sentences.j2"
+)
+
+summary_template = env.get_template(
+    "summarize_from_support.j2"
 )
 
 
 # ============================================================
-# OUTPUT
+# OUTPUT FOLDER
 # ============================================================
 
 output_dir = os.path.join(
@@ -100,14 +119,22 @@ os.makedirs(
     exist_ok=True
 )
 
+
+# ============================================================
+# STATS
+# ============================================================
+
 all_validated_sentences = []
+
+total_extracted = 0
+total_validated = 0
 
 model_calls = 0
 start_time = time.time()
 
 
 # ============================================================
-# PROCESS ALL CHUNKS
+# STEP 1: EXTRACT + VALIDATE SUPPORT SENTENCES
 # ============================================================
 
 for i, chunk in enumerate(
@@ -119,20 +146,48 @@ for i, chunk in enumerate(
         f"\nProcessing chunk {i}/{len(chunks)}..."
     )
 
-    prompt = template.render(
+    prompt = extract_template.render(
         source_text=chunk,
         max_sentences=args.max_sentences
     )
 
-    result = generate_summary(
-        prompt
-    )
+    result = None
+    max_retries = 3
 
-    model_calls += 1
+    for attempt in range(
+        1,
+        max_retries + 1
+    ):
+        try:
+            result = generate_summary(
+                prompt
+            )
 
-    if result is None:
+            model_calls += 1
+
+            if result is not None and result.strip():
+                break
+
+            print(
+                f"Chunk {i}: empty response "
+                f"(attempt {attempt}/{max_retries})"
+            )
+
+        except RuntimeError as e:
+            model_calls += 1
+
+            print(
+                f"Chunk {i}: model error "
+                f"(attempt {attempt}/{max_retries}): {e}"
+            )
+
+        if attempt < max_retries:
+            time.sleep(2)
+
+    if result is None or not result.strip():
         raise RuntimeError(
-            f"No model output for chunk {i}"
+            f"No model output for chunk {i} "
+            f"after {max_retries} attempts"
         )
 
     extracted_sentences = [
@@ -140,6 +195,10 @@ for i, chunk in enumerate(
         for line in result.splitlines()
         if line.strip()
     ]
+
+    total_extracted += len(
+        extracted_sentences
+    )
 
     normalized_chunk = normalize_text(
         chunk
@@ -158,6 +217,14 @@ for i, chunk in enumerate(
                 sentence
             )
 
+    total_validated += len(
+        validated_sentences
+    )
+
+    all_validated_sentences.extend(
+        validated_sentences
+    )
+
     print(
         "Extracted:",
         len(extracted_sentences)
@@ -168,22 +235,18 @@ for i, chunk in enumerate(
         len(validated_sentences)
     )
 
-    all_validated_sentences.extend(
-        validated_sentences
-    )
-
 
 # ============================================================
-# SAVE FINAL OUTPUT
+# SAVE SUPPORT SENTENCES
 # ============================================================
 
-output_path = os.path.join(
+support_path = os.path.join(
     output_dir,
-    f"{args.output_name}_key_sentences.txt"
+    f"{args.output_name}_support_sentences.txt"
 )
 
 with open(
-    output_path,
+    support_path,
     "w",
     encoding="utf-8"
 ) as f:
@@ -194,15 +257,89 @@ with open(
         )
 
 
+# ============================================================
+# STEP 2: GENERATE FINAL SUMMARY
+# ============================================================
+
+support_text = "\n".join(
+    all_validated_sentences
+)
+
+print(
+    "\nGenerating final summary from validated support..."
+)
+
+summary_prompt = summary_template.render(
+    support_text=support_text,
+    summary_length=args.summary_words,
+    additional_instructions=args.additional_instructions
+)
+
+final_summary = generate_summary(
+    summary_prompt
+)
+
+model_calls += 1
+
+if final_summary is None or not final_summary.strip():
+    raise RuntimeError(
+        "No final summary was generated."
+    )
+
+
+# ============================================================
+# SAVE FINAL SUMMARY
+# ============================================================
+
+summary_path = os.path.join(
+    output_dir,
+    f"{args.output_name}_key_sentences_summary_{args.summary_words}_words.txt"
+)
+
+with open(
+    summary_path,
+    "w",
+    encoding="utf-8"
+) as f:
+
+    f.write(
+        final_summary
+    )
+
+
+# ============================================================
+# FINAL STATS
+# ============================================================
+
 runtime = time.time() - start_time
 
+validation_rate = (
+    total_validated / total_extracted * 100
+    if total_extracted > 0
+    else 0
+)
+
 print("\n" + "=" * 80)
-print("KEY SENTENCE EXTRACTION COMPLETE")
+print("EXTRACT-SUPPORT SUMMARIZATION COMPLETE")
 print("=" * 80)
 
 print(
-    "Validated sentences:",
-    len(all_validated_sentences)
+    "Extracted sentences:",
+    total_extracted
+)
+
+print(
+    "Validated support sentences:",
+    total_validated
+)
+
+print(
+    f"Validation rate: {validation_rate:.2f}%"
+)
+
+print(
+    "Final summary words:",
+    count_words(final_summary)
 )
 
 print(
@@ -215,6 +352,11 @@ print(
 )
 
 print(
-    "Saved:",
-    output_path
+    "Support saved:",
+    support_path
+)
+
+print(
+    "Summary saved:",
+    summary_path
 )

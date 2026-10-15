@@ -1,18 +1,26 @@
+
 import argparse
 import json
 import os
+import sys
 import time
+from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
+
+
+# ============================================================
+# PROJECT ROOT
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 
 from src.document_loader import load_document
 from src.chunking import chunk_document
 from src.llm import generate_summary
-import sys
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 # ============================================================
 # ARGUMENTS
@@ -61,22 +69,69 @@ def count_words(text):
     return len(text.split())
 
 
+def truncate_to_word_limit(text, max_words):
+    sentences = text.split(". ")
+
+    selected = []
+    total_words = 0
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+
+        if not sentence:
+            continue
+
+        words = sentence.split()
+
+        if total_words + len(words) > max_words:
+            break
+
+        selected.append(sentence)
+        total_words += len(words)
+
+    result = ". ".join(selected).strip()
+
+    if result and not result.endswith("."):
+        result += "."
+
+    return result
+
+
 model_calls = 0
 
 
-def call_model(prompt):
+def call_model(prompt, max_retries=3):
     global model_calls
 
-    result = generate_summary(prompt)
+    for attempt in range(1, max_retries + 1):
 
-    model_calls += 1
+        try:
+            result = generate_summary(prompt)
+            model_calls += 1
 
-    if result is None:
-        raise RuntimeError(
-            "The model returned no text."
-        )
+            if result is not None and result.strip():
+                return result.strip()
 
-    return result
+            print(
+                f"Empty model response. Retry {attempt}/{max_retries}..."
+            )
+
+        except RuntimeError as e:
+
+            print(
+                f"Model error: {e}"
+            )
+
+            if attempt < max_retries:
+                print(
+                    f"Retrying... {attempt}/{max_retries}"
+                )
+
+                time.sleep(2)
+
+    raise RuntimeError(
+        "The model failed after multiple retries."
+    )
 
 
 # ============================================================
@@ -135,7 +190,7 @@ base_output_dir = os.path.join(
 
 intermediate_dir = os.path.join(
     base_output_dir,
-    "intermediate"
+    f"intermediate_{SUMMARY_WORDS}_words"
 )
 
 os.makedirs(
@@ -153,15 +208,41 @@ def compress_to_target(
     label
 ):
 
-    max_attempts = 3
-    attempt = 0
+    max_attempts = 2
 
-    while (
-        count_words(summary) > SUMMARY_WORDS
-        and attempt < max_attempts
+    for attempt in range(
+        1,
+        max_attempts + 1
     ):
 
-        attempt += 1
+        current_words = count_words(
+            summary
+        )
+
+        if current_words <= SUMMARY_WORDS:
+            break
+
+        # If the summary exceeds the target only slightly,
+        # avoid an extra LLM compression call.
+        if current_words <= int(SUMMARY_WORDS * 1.10):
+
+            print(
+                f"{label}: small overshoot "
+                f"({current_words} words), "
+                "using deterministic sentence-safe truncation."
+            )
+
+            summary = truncate_to_word_limit(
+                summary,
+                SUMMARY_WORDS
+            )
+
+            print(
+                "Words after deterministic truncation:",
+                count_words(summary)
+            )
+
+            break
 
         print(
             f"{label}: compression attempt {attempt}"
@@ -169,7 +250,7 @@ def compress_to_target(
 
         print(
             "Current words:",
-            count_words(summary)
+            current_words
         )
 
         compress_prompt = compress_template.render(
@@ -177,16 +258,78 @@ def compress_to_target(
             summary_length=SUMMARY_WORDS
         )
 
-        summary = call_model(
+        compressed = call_model(
             compress_prompt
+        )
+
+        compressed_words = count_words(
+            compressed
         )
 
         print(
             "Words after compression:",
+            compressed_words
+        )
+
+        # Accept compression only if it actually improves length
+        if compressed_words < current_words:
+
+            summary = compressed
+
+        else:
+
+            print(
+                "Compression did not improve the length. Stopping compression."
+            )
+
+            break
+
+    # Final deterministic fallback
+    if count_words(summary) > SUMMARY_WORDS:
+
+        print(
+            f"{label}: applying final word-limit fallback..."
+        )
+
+        summary = truncate_to_word_limit(
+            summary,
+            SUMMARY_WORDS
+        )
+
+        print(
+            "Words after fallback:",
             count_words(summary)
         )
 
     return summary
+# ============================================================
+# FIND SAVED PROGRESS
+# ============================================================
+
+def find_latest_intermediate():
+
+    latest_chunk = 0
+    latest_path = None
+
+    for i in range(
+        1,
+        len(chunks) + 1
+    ):
+
+        path = os.path.join(
+            intermediate_dir,
+            f"chunk_{i}.txt"
+        )
+
+        if os.path.exists(path):
+
+            latest_chunk = i
+            latest_path = path
+
+        else:
+            break
+
+    return latest_chunk, latest_path
 
 
 # ============================================================
@@ -197,83 +340,115 @@ start_time = time.time()
 
 
 # ============================================================
-# FIRST CHUNK
+# RESUME OR START
 # ============================================================
 
-print(
-    f"\nProcessing chunk 1/{len(chunks)}..."
-)
-
-first_prompt = summarize_template.render(
-    chunk=chunks[0],
-    summary_length=SUMMARY_WORDS
-)
-
-current_summary = call_model(
-    first_prompt
-)
-
-current_summary = compress_to_target(
-    current_summary,
-    "Chunk 1"
-)
+latest_chunk, latest_path = find_latest_intermediate()
 
 
-# Save intermediate summary
+if latest_chunk > 0:
 
-with open(
-    os.path.join(
-        intermediate_dir,
-        "chunk_1.txt"
-    ),
-    "w",
-    encoding="utf-8"
-) as f:
-
-    f.write(
-        current_summary
+    print(
+        f"\nFound saved progress at chunk {latest_chunk}."
     )
+
+    print(
+        f"Resuming from chunk {latest_chunk + 1}..."
+    )
+
+    with open(
+        latest_path,
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        current_summary = f.read()
+
+    start_chunk_index = latest_chunk
+
+
+else:
+
+    print(
+        f"\nProcessing chunk 1/{len(chunks)}..."
+    )
+
+    first_prompt = summarize_template.render(
+        chunk=chunks[0],
+        summary_length=SUMMARY_WORDS
+    )
+
+    current_summary = call_model(
+        first_prompt
+    )
+
+    current_summary = compress_to_target(
+        current_summary,
+        "Chunk 1"
+    )
+
+    with open(
+        os.path.join(
+            intermediate_dir,
+            "chunk_1.txt"
+        ),
+        "w",
+        encoding="utf-8"
+    ) as f:
+
+        f.write(
+            current_summary
+        )
+
+    print(
+        "Current summary words:",
+        count_words(current_summary)
+    )
+
+    start_chunk_index = 1
 
 
 # ============================================================
 # REMAINING CHUNKS
 # ============================================================
 
-for i, chunk in enumerate(
-    chunks[1:],
-    start=2
+for chunk_index in range(
+    start_chunk_index,
+    len(chunks)
 ):
 
+    chunk_number = chunk_index + 1
+
     print(
-        f"\nProcessing chunk {i}/{len(chunks)}..."
+        f"\nProcessing chunk {chunk_number}/{len(chunks)}..."
     )
+
+    chunk = chunks[
+        chunk_index
+    ]
 
     update_prompt = update_template.render(
         current_summary=current_summary,
         chunk=chunk,
-
-        # Kept for compatibility with current template
         target_tokens=SUMMARY_WORDS,
-
-        # Actual target for this experiment
         summary_length=SUMMARY_WORDS
     )
 
-    current_summary = call_model(
+    updated_summary = call_model(
         update_prompt
     )
 
     current_summary = compress_to_target(
-        current_summary,
-        f"Chunk {i}"
+        updated_summary,
+        f"Chunk {chunk_number}"
     )
 
 
-    # Save intermediate summary
+    # Save progress immediately after every successful chunk
 
     intermediate_path = os.path.join(
         intermediate_dir,
-        f"chunk_{i}.txt"
+        f"chunk_{chunk_number}.txt"
     )
 
     with open(
@@ -289,6 +464,10 @@ for i, chunk in enumerate(
     print(
         "Current summary words:",
         count_words(current_summary)
+    )
+
+    print(
+        f"Progress saved: chunk {chunk_number}"
     )
 
 
@@ -338,8 +517,8 @@ metadata = {
     "final_words": final_word_count,
     "context_size": CONTEXT_SIZE,
     "chunks": len(chunks),
-    "model_calls": model_calls,
-    "runtime_seconds": runtime
+    "model_calls_this_run": model_calls,
+    "runtime_seconds_this_run": runtime
 }
 
 metadata_path = os.path.join(
@@ -375,11 +554,11 @@ print(
 )
 
 print(
-    f"Runtime: {runtime:.2f} seconds"
+    f"Runtime this run: {runtime:.2f} seconds"
 )
 
 print(
-    "Model calls:",
+    "Model calls this run:",
     model_calls
 )
 

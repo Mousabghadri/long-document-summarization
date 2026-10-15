@@ -4,9 +4,8 @@ venv/
 __pycache__/
 *.pyc
 
-data/*.pdf
-data/*.txt
-data/*.docx
+data/
 outputs/
 deliverables/
 *.zip
+archive/

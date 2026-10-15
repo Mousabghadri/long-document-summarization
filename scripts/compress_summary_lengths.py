@@ -1,16 +1,17 @@
 import argparse
 import os
 import re
+import sys
 import time
+from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from src.llm import generate_summary
-import sys
-from pathlib import Path
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.llm import generate_summary
+
 
 # ============================================================
 # ARGUMENTS
@@ -35,23 +36,98 @@ args = parser.parse_args()
 
 
 # ============================================================
-# LOAD SOURCE SUMMARY
-# ============================================================
-
-with open(
-    args.file,
-    "r",
-    encoding="utf-8"
-) as f:
-    current_summary = f.read().strip()
-
-
-# ============================================================
 # HELPERS
 # ============================================================
 
 def count_words(text):
     return len(text.split())
+
+
+def clean_plain_text(text):
+    """
+    Convert common Markdown formatting to plain text
+    without changing factual content.
+    """
+
+    lines = text.splitlines()
+    cleaned_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Remove horizontal rules
+        if re.fullmatch(r"-{3,}", stripped):
+            continue
+
+        # Remove Markdown heading markers
+        stripped = re.sub(
+            r"^#{1,6}\s*",
+            "",
+            stripped
+        )
+
+        # Convert Markdown tables to plain text
+        if stripped.startswith("|") and stripped.endswith("|"):
+
+            cells = [
+                cell.strip()
+                for cell in stripped.strip("|").split("|")
+            ]
+
+            # Skip separator row
+            if all(
+                re.fullmatch(r":?-+:?", cell)
+                for cell in cells
+            ):
+                continue
+
+            if len(cells) == 2:
+                stripped = f"{cells[0]}: {cells[1]}"
+            else:
+                stripped = " - ".join(cells)
+
+        # Convert Markdown bullets to plain text bullets
+        stripped = re.sub(
+            r"^[-*+]\s+",
+            "- ",
+            stripped
+        )
+
+        # Remove bold / italic markers
+        stripped = stripped.replace("**", "")
+        stripped = stripped.replace("__", "")
+
+        stripped = re.sub(
+            r"(?<!\*)\*(?!\*)",
+            "",
+            stripped
+        )
+
+        stripped = re.sub(
+            r"(?<!_)_(?!_)",
+            "",
+            stripped
+        )
+
+        cleaned_lines.append(stripped)
+
+    text = "\n".join(cleaned_lines)
+
+    # Remove headings that appeared in the middle of a line
+    text = re.sub(
+        r"\s+#{1,6}\s+",
+        "\n\n",
+        text
+    )
+
+    # Remove excessive blank lines
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        text
+    )
+
+    return text.strip()
 
 
 def truncate_to_complete_sentence_by_words(
@@ -82,14 +158,50 @@ def truncate_to_complete_sentence_by_words(
             break
 
     if kept_sentences:
-        return " ".join(
+        result = " ".join(
             kept_sentences
-        )
+        ).strip()
 
-    # Fallback only if the first sentence itself is too long
+        # Remove incomplete numbered item like "32."
+        result = re.sub(
+            r"\n?\s*\d+\.\s*$",
+            "",
+            result
+        ).strip()
+
+        return result
+
+    # Fallback only if first sentence itself is too long
     words = text.split()[:max_words]
 
-    return " ".join(words)
+    result = " ".join(words).strip()
+
+    result = re.sub(
+        r"\n?\s*\d+\.\s*$",
+        "",
+        result
+    ).strip()
+
+    return result
+
+
+# ============================================================
+# LOAD SOURCE SUMMARY
+# ============================================================
+
+with open(
+    args.file,
+    "r",
+    encoding="utf-8"
+) as f:
+    current_summary = f.read().strip()
+
+
+# Clean the input before doing anything else
+
+current_summary = clean_plain_text(
+    current_summary
+)
 
 
 print(
@@ -154,6 +266,7 @@ for target_words in targets:
 
     compressed_summary = current_summary
 
+
     # --------------------------------------------------------
     # MODEL COMPRESSION - ATTEMPT 1
     # --------------------------------------------------------
@@ -169,10 +282,14 @@ for target_words in targets:
 
     total_model_calls += 1
 
-    if compressed_summary is None:
+    if compressed_summary is None or not compressed_summary.strip():
         raise RuntimeError(
             f"Model returned no text for {target_words}-word summary."
         )
+
+    compressed_summary = clean_plain_text(
+        compressed_summary
+    )
 
     print(
         "Words after compression attempt 1:",
@@ -191,21 +308,30 @@ for target_words in targets:
             summary_length=target_words
         )
 
-        compressed_summary = generate_summary(
+        second_result = generate_summary(
             prompt
         )
 
         total_model_calls += 1
 
-        if compressed_summary is None:
-            raise RuntimeError(
-                f"Model returned no text for {target_words}-word summary."
+        if second_result is not None and second_result.strip():
+
+            second_result = clean_plain_text(
+                second_result
             )
 
-        print(
-            "Words after compression attempt 2:",
-            count_words(compressed_summary)
-        )
+            print(
+                "Words after compression attempt 2:",
+                count_words(second_result)
+            )
+
+            # Accept only if it actually improves length
+            if count_words(second_result) < count_words(compressed_summary):
+                compressed_summary = second_result
+            else:
+                print(
+                    "Second compression did not improve length."
+                )
 
 
     # --------------------------------------------------------
@@ -232,6 +358,13 @@ for target_words in targets:
             count_words(compressed_summary),
             "words"
         )
+
+
+    # Final formatting cleanup
+
+    compressed_summary = clean_plain_text(
+        compressed_summary
+    )
 
 
     # ========================================================

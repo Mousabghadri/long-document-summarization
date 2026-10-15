@@ -1,0 +1,30 @@
+You are identifying the major themes of a long document.
+
+DOCUMENT SAMPLE:
+
+{{ document_sample }}
+
+Identify the most important high-level themes needed to understand the document as a whole.
+
+The themes will later be used to guide information extraction from individual chunks of the document.
+
+Rules:
+
+- Focus on document-level importance, not local details.
+- Identify broad themes that represent the overall content and structure.
+- Prefer major topics, purposes, concepts, events, arguments, findings, processes, relationships, or sections.
+- Do not focus excessively on examples, background details, procedural details, or repeated information.
+- Do not add information that is not explicitly present in the document sample.
+- Do not use prior knowledge.
+- Keep each theme short and general enough to guide extraction from different parts of the document.
+- Return at most {{ max_themes }} themes.
+
+Return ONLY valid JSON:
+
+{
+  "themes": [
+    "theme 1",
+    "theme 2",
+    "theme 3"
+  ]
+}

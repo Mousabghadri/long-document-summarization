@@ -1,0 +1,85 @@
+You are evaluating a generated summary against a human-written reference summary.
+
+The human reference is NOT the complete source document.
+It is a human-written overview and may omit many correct details from the original document.
+
+Therefore:
+
+- Do NOT label a detail as false or unsupported merely because it is absent from the human reference.
+- Use the human reference primarily to evaluate coverage, emphasis, relevance, and overall summarization quality.
+- Factual grounding against the original source is evaluated separately.
+
+HUMAN REFERENCE:
+
+{{ human_reference }}
+
+GENERATED SUMMARY:
+
+{{ generated_summary }}
+
+Evaluate the generated summary relative to the human reference.
+
+Focus on:
+
+1. COVERAGE
+Does the generated summary cover the major topics and themes emphasized by the human reference?
+
+2. EMPHASIS
+Does the generated summary allocate attention reasonably, or does it spend excessive space on secondary details while omitting major themes?
+
+3. RELEVANCE
+Is the content appropriate for a concise overview of the document?
+
+4. COHERENCE
+Is the summary logically structured, readable, and coherent?
+
+5. REFERENCE ALIGNMENT
+Does the generated summary represent the same overall picture and priorities as the human-written overview?
+
+Important rules:
+
+- The generated summary may contain correct information that is not present in the human reference.
+- Do NOT treat such additional information as an error solely because the reference omitted it.
+- Only report a direct conflict when the generated summary clearly contradicts something stated in the human reference.
+- Distinguish between:
+  a) missing an important reference theme,
+  b) adding extra detail,
+  c) directly contradicting the reference.
+
+Return VALID JSON only in this exact format:
+
+{
+  "coverage_score": 1,
+  "emphasis_score": 1,
+  "relevance_score": 1,
+  "coherence_score": 1,
+  "reference_alignment_score": 1,
+  "overall_score": 1,
+  "missing_major_points": [
+    "..."
+  ],
+  "overemphasized_or_extra_details": [
+    "..."
+  ],
+  "direct_conflicts_with_reference": [
+    "..."
+  ],
+  "strengths": [
+    "..."
+  ],
+  "verdict": "..."
+}
+
+Scoring:
+
+1 = very poor
+2 = poor
+3 = acceptable
+4 = good
+5 = excellent
+
+Be strict but fair.
+
+Do not penalize correct extra information simply because the human reference is shorter.
+
+Return JSON only.

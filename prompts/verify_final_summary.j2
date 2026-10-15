@@ -1,0 +1,46 @@
+You are verifying a generated summary against a set of supported claims.
+
+SUPPORTED CLAIMS:
+
+{{ claims_text }}
+
+SUMMARY TO VERIFY:
+
+{{ summary_text }}
+
+Check every factual statement in the summary.
+
+For each statement:
+- "supported" if its full meaning is supported by the supported claims.
+- "partial" if only part of it is supported.
+- "unsupported" if the supported claims do not contain enough evidence.
+- "contradicted" if it conflicts with the supported claims.
+
+STRICT RULES:
+
+1. Use ONLY the supported claims.
+2. Do NOT use prior knowledge.
+3. Do NOT add or correct facts.
+4. Pay special attention to:
+   - categories, types, roles, and classifications
+   - names, identifiers, section references, or numbering
+   - numbers, quantities, thresholds, and measurements
+   - dates and timelines
+   - exceptions, limitations, and conditions
+   - responsibilities, actions, relationships, and requirements
+5. Preserve the original scope, actor, subject, condition, and meaning of each statement.
+6. Do not treat related or similar information as full support.
+7. A statement is fully supported only when all important parts of its meaning are supported.
+8. Return one result for each factual statement.
+
+Return ONLY valid JSON:
+
+{
+  "statements": [
+    {
+      "statement": "exact statement from the summary",
+      "label": "supported",
+      "reason": "brief explanation"
+    }
+  ]
+}

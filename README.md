@@ -1,54 +1,96 @@
 # Long Document Summarization
 
-This project explores different approaches for summarizing long documents using Large Language Models.
+This project explores and compares multiple Large Language Model approaches for summarizing long documents.
 
-The current experiments focus on legal and regulatory documents, especially:
+The goal is to build a document-agnostic summarization pipeline that can work across different types of long documents rather than being tied to one specific domain.
 
-- EU AI Act
-- GDPR
+The main experiments currently use four EU regulatory documents:
 
-However, the pipeline is designed to work with general long documents rather than being specific to legal texts.
+- EU Artificial Intelligence Act
+- General Data Protection Regulation (GDPR)
+- Data Governance Act (DGA)
+- Data Act
 
-## Methods
+The methods themselves are designed to remain general enough to later support other document types such as technical manuals, academic texts, books, or other long-form documents.
+
+## Main Summarization Methods
 
 ### 1. Sequential Summarization
 
-The document is split into chunks.
+The document is divided into chunks.
 
-The first chunk is summarized, then each following chunk is used to update the current running summary.
+The first chunk is summarized, and each following chunk is used to update the existing running summary.
 
-If the running summary becomes too long, it is compressed.
+If the running summary becomes too long, a compression step is applied.
 
-This method produces a coherent final summary, but each step depends on the previous step, which makes parallelization difficult.
+Because every step depends on the previous summary, the method is inherently sequential and difficult to parallelize.
 
-### 2. Key Sentence Extraction
+### 2. Key Sentence Extraction / Extract-Support
 
-Important sentences are extracted directly from each source chunk.
+For each source chunk, the model selects important complete sentences.
 
-The extracted sentences are validated against the original source text using exact matching after whitespace normalization.
+The sentences must be copied exactly from the source.
 
-Only sentences that can be found in the source are retained.
+Each extracted sentence is validated using exact matching after whitespace normalization.
 
-This provides strong grounding because the accepted output remains directly tied to the original document.
+Only validated source sentences are retained.
+
+The validated support sentences from the complete document are then used to generate a coherent grounded summary.
+
+This provides strong source grounding while still producing a coherent abstractive final summary.
 
 ### 3. Claim Extraction and Verification
 
-The model extracts short factual claims from each chunk.
+For each source chunk, the model extracts short factual claims.
 
-A second verification step checks each claim against the corresponding source chunk and assigns one label:
+A verification step checks each extracted claim against its corresponding source chunk.
+
+Each claim receives one of four labels:
 
 - supported
 - partial
 - unsupported
 - contradicted
 
-Only supported claims are retained in the final full-document output.
+Only supported claims are retained.
 
-The verifier preserves each original claim and does not split claims into additional atomic claims.
+The supported claims from the full document are then used to generate a coherent grounded summary.
+
+The current pipeline also supports document-level themes that can guide claim selection and final summary organization.
+
+## Document-Agnostic Design
+
+An important goal of the project is to avoid prompts that are specific to a particular document domain.
+
+Earlier prompts contained wording specific to the AI Act, GDPR, or legal documents.
+
+These prompts were later generalized so that the pipeline can work with other document types.
+
+Current prompts avoid assumptions about:
+
+- laws
+- regulations
+- legal actors
+- AI systems
+- providers or deployers
+- legal article structure
+
+Instead, they use general concepts such as:
+
+- actors
+- entities
+- objects
+- categories
+- events
+- relationships
+- conditions
+- exceptions
+- findings
+- conclusions
 
 ## Document Loading
 
-The pipeline currently supports:
+The current loader supports:
 
 - TXT
 - PDF
@@ -56,200 +98,347 @@ The pipeline currently supports:
 
 ## Chunking
 
-Documents are divided into chunks according to a configurable token context size.
+Documents are split into chunks according to a configurable token limit.
 
-Example context sizes used during experiments:
+A common experimental setting is 8000 tokens per chunk.
 
-- 4000 tokens
-- 8000 tokens
+Chunk size affects both runtime and summarization behavior.
 
-Larger context sizes reduce the number of chunks and may improve runtime for sequential summarization.
+Larger chunks:
 
-## Summary Lengths
+- reduce the number of model calls
+- reduce the number of sequential update steps
+- provide more context per model call
 
-Experiments were performed with approximate target lengths of:
+However, chunk-based summarization can also introduce structural bias when different parts of a document have very different roles.
 
-- 250 words
-- 500 words
-- 1000 words
-- 2000 words
+For example, experiments on the Data Governance Act showed that long introductory recitals can receive disproportionate representation compared with later operative sections.
 
-For Sequential Summarization, a long final summary is generated first and shorter versions are created through additional compression steps.
+## Document Structure and Selection Bias
 
-For Key Sentences and Claims, shorter outputs are created by selecting complete validated sentences or supported claims without rewriting them.
+Manual inspection of the DGA experiments revealed several important failure modes.
 
-## Project Structure
+### Claims and Key Sentences
 
-```text
-.
-├── main.py
-├── hierarchical.py
-├── claims.py
-├── key_sentences.py
-├── evaluate_outputs.py
-├── quality_evaluation.py
-├── comparison_results.py
-│
-├── scripts/
-│   ├── claims_full.py
-│   ├── key_sentences_full.py
-│   ├── generate_length_summaries.py
-│   ├── compress_summary_lengths.py
-│   └── create_method_lengths.py
-│
-├── src/
-│   ├── chunking.py
-│   ├── document_loader.py
-│   └── llm.py
-│
-├── prompts/
-├── docs/
-├── outputs/
-└── deliverables/
-```
+Both methods select information locally from individual chunks.
 
-## Running the Scripts
+If each chunk receives a similar extraction budget, a chunk containing background or introductory material can receive similar representation to a chunk containing core document content.
 
-Scripts inside the `scripts` directory should be run as Python modules from the project root.
+This can create a local-importance bias.
 
-### Key Sentence Extraction
+### Sequential
 
-```bash
-python -m scripts.key_sentences_full data/ai_act.pdf --context-size 8000 --max-sentences 10 --output-name ai_act
-```
+Sequential summarization is order-dependent.
 
-### Claim Extraction and Verification
+Early chunks establish the initial summary, while later prompts are instructed to preserve important information already present in that summary.
 
-```bash
-python -m scripts.claims_full data/ai_act.pdf --context-size 8000 --max-claims 10 --output-name ai_act
-```
+This can create early-chunk anchoring where the framing introduced by the beginning of a document persists throughout later updates.
 
-### Sequential Full-Document Summary
+These effects are now treated as important limitations of chunk-based long-document summarization.
 
-```bash
-python -m scripts.generate_length_summaries data/ai_act.pdf --summary-words 2000 --context-size 8000 --output-name ai_act
-```
+## Document-Level Themes
 
-### Create Shorter Sequential Summaries
+An experimental Claims variant first extracts high-level document themes from a sample distributed across the beginning, middle, and end of the document.
 
-```bash
-python -m scripts.compress_summary_lengths outputs/full_summaries/ai_act/ai_act_2000_words.txt --output-prefix ai_act
-```
+These themes are then used to guide claim selection across individual chunks.
 
-### Create Different Lengths for Key Sentences or Claims
+Example theme categories can include:
 
-Example for Key Sentences:
+- overall purpose
+- major concepts
+- major sections
+- important actors
+- major processes
+- major relationships
+- important conditions
+- conclusions
 
-```bash
-python -m scripts.create_method_lengths outputs/method_outputs/ai_act/ai_act_key_sentences.txt --output-prefix ai_act_key_sentences
-```
+The themes are used only as guidance.
 
-Example for Claims:
+Individual claims must still be explicitly supported by the source chunk.
 
-```bash
-python -m scripts.create_method_lengths outputs/method_outputs/ai_act/ai_act_claims.txt --output-prefix ai_act_claims
-```
+On the DGA experiment, this approach improved the LLM-as-a-Judge overall score from 2/5 to 3/5, although standard reference metrics did not improve consistently.
 
-## Initial Evaluation
+For this reason, the theme-guided method is currently treated as an experimental variant rather than a replacement for the original baseline.
 
-The initial evaluation compared:
+## Evaluation
 
-- Faithfulness
-- Coverage
-- Coherence
-- Runtime
-- Number of model calls
+The current evaluation combines several complementary approaches.
 
-The first small-scale experiment was performed on the first three chunks of the EU AI Act.
+### 1. Standard Reference-Based Metrics
 
-Further full-document experiments were then performed on both the EU AI Act and GDPR.
+Generated summaries are compared with human-written reference summaries using:
 
-### Initial Quality Results
+- ROUGE-1
+- ROUGE-2
+- ROUGE-L
+- Semantic cosine similarity
 
-| Approach | Faithfulness | Coverage | Coherence |
-|---|---:|---:|---:|
-| Sequential | 5/5 | 3/5 | 5/5 |
-| Key Sentences | 5/5 | 2/5 | 3/5 |
-| Claims | 5/5 | 3/5 | 5/5 |
+Semantic similarity currently uses:
 
-These results are preliminary and were obtained from the initial small-scale experiment.
+`sentence-transformers/all-MiniLM-L6-v2`
 
-## Full-Document Experiments
+Human reference summaries are not assumed to contain every fact from the source document.
 
-For full-document experiments, a context size of 8000 tokens was used.
+Therefore, these metrics measure alignment with the reference rather than complete factual correctness.
 
-### AI Act
+### 2. Source Grounding Verification
 
-- Sequential:
-  - 16 chunks
-  - approximately 2000-word final summary
-  - additional 1000, 500, and 250-word versions
+Generated summary statements are checked against the full source document.
 
-- Key Sentences:
-  - 16 chunks
-  - 115 validated sentences retained from 160 extracted sentences
+Each statement can be classified as:
 
-- Claims:
-  - 160 extracted claims
-  - 142 supported
-  - 18 partial
-  - 0 unsupported
-  - 0 contradicted
+- supported
+- partial
+- unsupported
+- contradicted
 
-### GDPR
+Source grounding is useful for detecting unsupported statements, but it is not treated as proof of complete factual correctness.
 
-- Sequential:
-  - 9 chunks
-  - approximately 2000-word final summary
-  - additional 1000, 500, and 250-word versions
+Manual inspection showed that automatic aggregation can sometimes hide scope errors or contradictions distributed across different source chunks.
 
-- Key Sentences:
-  - 86 validated sentences retained from 89 extracted sentences
+### 3. LLM-as-a-Judge
 
-- Claims:
-  - 90 extracted claims
-  - 88 supported
-  - 2 partial
-  - 0 unsupported
-  - 0 contradicted
+A separate judge compares generated summaries with the human-written reference.
 
-## Runtime Observations
+The final evaluation uses a large DeepSeek model through OpenRouter.
 
-Sequential summarization is difficult to parallelize because each step depends on the previous running summary.
+The judge evaluates:
 
-Increasing the context size reduces the number of chunks and therefore reduces the number of sequential processing steps.
+- coverage
+- emphasis
+- reference alignment
+- relevance
+- coherence
+- overall quality
 
-Key Sentence Extraction can be processed independently across chunks.
+The LLM judge is treated as an additional evaluation signal rather than ground truth.
 
-Claim Extraction can also be partially parallelized across chunks, with each chunk requiring extraction followed by verification.
+### 4. Manual Inspection
 
-Runtime is not determined only by the number of model calls. Prompt size, output length, model processing time, and API variability also affect total runtime.
+All important problematic cases are also checked manually.
 
-## Model
+Manual inspection is especially important for detecting:
 
-Current experiments use:
+- scope changes
+- overgeneralization
+- incorrect actor attribution
+- misleading document framing
+- composite statements
+- hidden contradictions
+- document-structure bias
 
-`openai/gpt-oss-120b`
+## Experimental Progression
+
+The experiments followed the progression:
+
+1 target × 1 method
+
+↓
+
+1 target × 3 methods
+
+↓
+
+4 targets × 3 methods
+
+The current baseline contains:
+
+**4 target documents × 3 summarization methods = 12 summaries**
+
+Targets:
+
+- AI Act
+- GDPR
+- Data Governance Act
+- Data Act
+
+Methods:
+
+- Sequential
+- Key Sentences
+- Claims
+
+## High-Level Baseline Findings
+
+No single method performs best on every metric.
+
+General observations include:
+
+- Claims is often strong on semantic similarity and source grounding.
+- Sequential performs particularly well on some targets such as GDPR.
+- Key Sentences performs strongly on some ROUGE comparisons.
+- Results vary substantially depending on document structure.
+- High source-grounding scores do not always guarantee correct framing or scope.
+- Human-reference alignment and source grounding measure different properties.
+
+The DGA experiments were especially useful for exposing document-structure sensitivity.
+
+## Efficiency
+
+Runtime and model-call count are tracked for each method.
+
+### Sequential
+
+Sequential summarization is generally the most expensive because every chunk requires a new update of the running summary.
+
+Compression steps can add additional model calls.
+
+An optimization was added so that when the generated summary exceeds the target length by no more than 10%, deterministic sentence-safe truncation is used instead of another LLM compression call.
+
+In a DGA 1000-word test:
+
+- before optimization: 15 model calls
+- after optimization: 13 model calls
+
+The optimized run maintained strong quality and received an LLM-as-a-Judge overall score of 4/5.
+
+Runtime also decreased in that run, although runtime is affected by API and model variability and should therefore be interpreted more cautiously than model-call count.
+
+### Claims
+
+Claims generally requires:
+
+- 1 extraction call per chunk
+- 1 verification call per chunk
+- 1 final summary call
+
+Experimental theme-guided variants require one additional document-theme extraction call.
+
+### Key Sentences
+
+Key Sentence extraction generally requires fewer calls because source validation is deterministic rather than requiring a separate verification model call.
+
+## Output Organization
+
+Outputs are organized into separate baseline, experimental, evaluation, and archived results.
+
+### Baseline
+
+Contains the original 4-target × 3-method comparison.
+
+### Experiments
+
+Contains later method improvements and diagnostic experiments.
+
+Examples include:
+
+- prompt-cleaning experiments
+- claim-selection experiments
+- document-theme experiments
+- emphasis experiments
+- sequential efficiency experiments
+
+### Evaluation
+
+Contains the evaluation results for both baseline and experimental runs.
+
+This includes:
+
+- standard reference-based metrics
+- source-grounding verification
+- LLM-as-a-Judge results
+
+### Archive
+
+Contains older intermediate outputs, previous verification versions, and debugging experiments retained for reference.
+
+## Running the Main Methods
+
+Scripts should be run from the project root using Python module syntax.
+
+### Claims
+
+python -m scripts.claims_full data/ai_act.pdf --context-size 8000 --max-claims 10 --summary-words 1000 --output-name ai_act
+
+### Key Sentences
+
+python -m scripts.key_sentences_full data/ai_act.pdf --context-size 8000 --max-sentences 10 --summary-words 1000 --output-name ai_act
+
+### Sequential
+
+python -m scripts.generate_length_summaries data/ai_act.pdf --summary-words 1000 --context-size 8000 --output-name ai_act
+
+## Human Reference Evaluation
+
+Generated summaries are compared against human-written reference summaries.
+
+The evaluation script computes:
+
+- summary word count
+- reference word count
+- length ratio
+- ROUGE-1
+- ROUGE-2
+- ROUGE-L
+- semantic cosine similarity
+
+Example:
+
+python human_reference_evaluation.py data/references/ai_act_human_overview.txt outputs/baseline/full_summaries/ai_act/ai_act_1000_words.txt --method "AI Act Sequential" --output-file outputs/evaluation/baseline/ai_act_sequential_standard_metrics.json
+
+## LLM-as-a-Judge
+
+A separate LLM judge is used to compare generated summaries with the human-written reference summary.
+
+The final judge evaluates:
+
+- coverage
+- emphasis
+- reference alignment
+- relevance
+- coherence
+- overall quality
+
+The final evaluation uses:
+
+deepseek/deepseek-v3.2
 
 through OpenRouter.
 
+Example:
+
+python -m scripts.llm_judge_human_reference data/references/ai_act_human_overview.txt outputs/baseline/method_outputs/ai_act/ai_act_claims_summary_1000_words_v2.txt --model deepseek/deepseek-v3.2 --output-file outputs/evaluation/baseline/final_judge_ai_act_claims.json
+
+The LLM judge is treated as an additional evaluation signal rather than ground truth.
+
+## Model Configuration
+
+Main summarization experiments currently use an OpenRouter model configured through the environment variable:
+
+MODEL_NAME
+
+The original baseline experiments primarily used:
+
+openai/gpt-oss-120b
+
+The final LLM-as-a-Judge evaluation used:
+
+deepseek/deepseek-v3.2
+
+API keys are loaded through environment variables and must not be committed to the repository.
+
 ## Current Status
 
-Implemented:
+Completed:
 
-- Configurable chunk/context size
-- Configurable summary length
-- Sequential Summarization
-- Key Sentence Extraction
-- Exact source validation
-- Claim Extraction
-- Claim Verification
-- Full-document processing
-- Intermediate output storage
-- Runtime measurement
-- Model-call measurement
-- Multiple output lengths
-- Initial quality evaluation
-- Full-document outputs for the AI Act and GDPR
+- three long-document summarization methods
+- four target documents
+- 12 baseline summaries
+- human-reference evaluation
+- source-grounding verification
+- final DeepSeek LLM-as-a-Judge evaluation
+- manual inspection
+- document-agnostic prompt cleanup
+- document-structure bias investigation
+- experimental document-level theme guidance
+- initial Sequential efficiency optimization
 
-Current work focuses on comparing the approaches on complete documents and studying runtime, scalability, grounding, and coverage.
+Current work focuses on:
+
+- improving efficiency
+- understanding document-structure sensitivity
+- improving cross-domain generalization
+- preserving grounding while improving global document coverage
+
+Future work includes more robust stand-alone and decontextualized claim extraction.

@@ -1,18 +1,42 @@
-You are extracting factual claims from a source document.
+You are extracting factual claims from one chunk of a longer source document.
+
+{% if use_themes %}
+DOCUMENT-LEVEL THEMES:
+
+{{ document_themes }}
+{% endif %}
 
 SOURCE TEXT:
 
 {{ source_text }}
 
-Extract the most important factual claims from the source text.
+Extract the most important factual claims from this chunk.
+
+The extracted claims may later be combined with claims from other chunks to produce a summary of the entire document.
 
 Rules:
 - Each claim must contain only one main factual statement.
-- Keep claims short and specific.
+- Keep claims short, specific, and self-contained.
+- Preserve enough context so the claim can be understood outside this chunk.
 - Do not combine multiple independent facts into one claim.
 - Do not add information that is not in the source.
 - Do not use prior knowledge.
 - Return at most {{ max_claims }} claims.
+
+{% if use_themes %}
+SELECTION PRIORITIES:
+
+- Prefer claims that contribute to the document-level themes above.
+- Prefer claims that help represent the document as a whole.
+- Prefer major concepts, definitions, events, findings, arguments, requirements, relationships, conditions, exceptions, dates, numbers, or outcomes.
+- Avoid spending most of the claim budget on background, examples, repeated context, procedural details, or a single narrow subsection.
+- Avoid selecting multiple claims that express nearly the same idea.
+- Prefer broad representative coverage over local detail.
+
+IMPORTANT:
+The document-level themes are only guidance for selecting important claims.
+Do NOT create a claim unless it is explicitly supported by the SOURCE TEXT in this chunk.
+{% endif %}
 
 Return ONLY valid JSON:
 
