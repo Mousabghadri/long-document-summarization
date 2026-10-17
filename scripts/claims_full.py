@@ -1,8 +1,10 @@
 import argparse
 import json
 import os
+import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -15,9 +17,124 @@ from src.chunking import chunk_document
 from src.llm import generate_summary
 
 
+# ============================================================
+# HELPERS
+# ============================================================
+
 def count_words(text):
     return len(text.split())
 
+
+def clean_plain_text(text):
+    lines = text.splitlines()
+    cleaned_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if re.fullmatch(r"-{3,}", stripped):
+            continue
+
+        stripped = re.sub(
+            r"^#{1,6}\s*",
+            "",
+            stripped
+        )
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [
+                cell.strip()
+                for cell in stripped.strip("|").split("|")
+            ]
+
+            if all(
+                re.fullmatch(r":?-+:?", cell)
+                for cell in cells
+            ):
+                continue
+
+            if len(cells) == 2:
+                stripped = f"{cells[0]}: {cells[1]}"
+            else:
+                stripped = " - ".join(cells)
+
+        stripped = re.sub(
+            r"^[-*+]\s+",
+            "- ",
+            stripped
+        )
+
+        stripped = stripped.replace("**", "")
+        stripped = stripped.replace("__", "")
+
+        stripped = re.sub(
+            r"(?<!\*)\*(?!\*)",
+            "",
+            stripped
+        )
+
+        stripped = re.sub(
+            r"(?<!_)_(?!_)",
+            "",
+            stripped
+        )
+
+        cleaned_lines.append(stripped)
+
+    text = "\n".join(cleaned_lines)
+
+    text = re.sub(
+        r"\s+#{1,6}\s+",
+        "\n\n",
+        text
+    )
+
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        text
+    )
+
+    return text.strip()
+
+
+def truncate_to_word_limit(text, max_words):
+    sentences = re.split(
+        r"(?<=[.!?])\s+",
+        text.strip()
+    )
+
+    selected = []
+    total_words = 0
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+
+        if not sentence:
+            continue
+
+        words = sentence.split()
+
+        if total_words + len(words) > max_words:
+            break
+
+        selected.append(sentence)
+        total_words += len(words)
+
+    result = " ".join(selected).strip()
+
+    result = re.sub(
+        r"\n?\s*\d+\.\s*$",
+        "",
+        result
+    ).strip()
+
+    return result
+
+
+# ============================================================
+# ARGUMENTS
+# ============================================================
 
 parser = argparse.ArgumentParser(
     description="Extract, verify, and summarize claims from a full document"
@@ -68,6 +185,13 @@ parser.add_argument(
     help="Enable experimental document-level theme guidance"
 )
 
+parser.add_argument(
+    "--workers",
+    type=int,
+    default=5,
+    help="Maximum number of chunks processed in parallel"
+)
+
 args = parser.parse_args()
 
 
@@ -85,6 +209,7 @@ chunks = chunk_document(
 print("Total chunks:", len(chunks))
 print("Context size:", args.context_size)
 print("Target summary:", args.summary_words, "words")
+print("Parallel workers:", args.workers)
 print(
     "Theme guidance:",
     "ENABLED" if args.use_themes else "DISABLED"
@@ -109,6 +234,10 @@ verify_template = env.get_template(
 
 summary_template = env.get_template(
     "summarize_from_claims.j2"
+)
+
+compress_template = env.get_template(
+    "compress.j2"
 )
 
 themes_template = None
@@ -139,19 +268,12 @@ os.makedirs(
 # STATS
 # ============================================================
 
-all_supported_claims = []
-
-total_extracted = 0
-supported = 0
-partial = 0
-unsupported = 0
-contradicted = 0
-
-model_calls = 0
 start_time = time.time()
 
 document_themes = []
 themes_text = ""
+
+model_calls = 0
 
 
 # ============================================================
@@ -160,12 +282,8 @@ themes_text = ""
 
 if args.use_themes:
 
-    sample_chunks = []
-
     if len(chunks) == 1:
-        sample_chunks = [
-            chunks[0]
-        ]
+        sample_chunks = [chunks[0]]
 
     elif len(chunks) == 2:
         sample_chunks = [
@@ -229,22 +347,18 @@ if args.use_themes:
 
 
 # ============================================================
-# PROCESS ALL CHUNKS
+# PROCESS ONE CHUNK
 # ============================================================
 
-for i, chunk in enumerate(
-    chunks,
-    start=1
-):
+def process_chunk(index, chunk):
+    chunk_number = index + 1
+    calls = 0
 
     print(
-        f"\nProcessing chunk {i}/{len(chunks)}..."
+        f"\nStarting chunk {chunk_number}/{len(chunks)}..."
     )
 
-
-    # --------------------------------------------------------
     # EXTRACT CLAIMS
-    # --------------------------------------------------------
 
     extract_prompt = extract_template.render(
         source_text=chunk,
@@ -257,13 +371,12 @@ for i, chunk in enumerate(
         extract_prompt
     )
 
-    model_calls += 1
+    calls += 1
 
     if extract_result is None:
-        print(
-            "No extraction output."
+        raise RuntimeError(
+            f"No extraction output for chunk {chunk_number}"
         )
-        continue
 
     try:
         extracted_json = json.loads(
@@ -275,26 +388,28 @@ for i, chunk in enumerate(
             []
         )
 
-    except json.JSONDecodeError:
-        print(
-            "Extraction output is not valid JSON."
-        )
-        continue
-
-    total_extracted += len(claims)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Invalid extraction JSON for chunk {chunk_number}"
+        ) from e
 
     print(
-        "Claims extracted:",
-        len(claims)
+        f"Chunk {chunk_number}: extracted {len(claims)} claims"
     )
 
-
-    # --------------------------------------------------------
-    # VERIFY CLAIMS
-    # --------------------------------------------------------
-
     if not claims:
-        continue
+        return {
+            "index": index,
+            "claims": [],
+            "supported_claims": [],
+            "supported": 0,
+            "partial": 0,
+            "unsupported": 0,
+            "contradicted": 0,
+            "model_calls": calls
+        }
+
+    # VERIFY CLAIMS
 
     claims_text = "\n".join(
         claims
@@ -309,36 +424,34 @@ for i, chunk in enumerate(
         verify_prompt
     )
 
-    model_calls += 1
+    calls += 1
 
     if verify_result is None:
-        print(
-            "No verification output."
+        raise RuntimeError(
+            f"No verification output for chunk {chunk_number}"
         )
-        continue
 
     try:
         verified_json = json.loads(
             verify_result
         )
 
-    except json.JSONDecodeError:
-        print(
-            "Verification output is not valid JSON."
-        )
-        continue
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Invalid verification JSON for chunk {chunk_number}"
+        ) from e
 
     verified_claims = verified_json.get(
         "claims",
         []
     )
 
+    supported_claims = []
 
-    # --------------------------------------------------------
-    # PROCESS LABELS
-    # --------------------------------------------------------
-
-    chunk_supported = 0
+    supported = 0
+    partial = 0
+    unsupported = 0
+    contradicted = 0
 
     for claim in verified_claims:
 
@@ -352,12 +465,10 @@ for i, chunk in enumerate(
         )
 
         if label == "supported":
-
             supported += 1
-            chunk_supported += 1
 
             if claim_text:
-                all_supported_claims.append(
+                supported_claims.append(
                     claim_text
                 )
 
@@ -371,8 +482,95 @@ for i, chunk in enumerate(
             contradicted += 1
 
     print(
-        "Supported:",
-        chunk_supported
+        f"Chunk {chunk_number} complete — "
+        f"Supported: {supported}, "
+        f"Partial: {partial}, "
+        f"Unsupported: {unsupported}, "
+        f"Contradicted: {contradicted}"
+    )
+
+    return {
+        "index": index,
+        "claims": claims,
+        "supported_claims": supported_claims,
+        "supported": supported,
+        "partial": partial,
+        "unsupported": unsupported,
+        "contradicted": contradicted,
+        "model_calls": calls
+    }
+
+
+# ============================================================
+# PARALLEL CHUNK PROCESSING
+# ============================================================
+
+print(
+    "\nStarting parallel Claims extraction + verification..."
+)
+
+results = []
+
+with ThreadPoolExecutor(
+    max_workers=args.workers
+) as executor:
+
+    futures = {
+        executor.submit(
+            process_chunk,
+            i,
+            chunk
+        ): i
+        for i, chunk in enumerate(chunks)
+    }
+
+    for future in as_completed(futures):
+
+        chunk_index = futures[future]
+
+        try:
+            result = future.result()
+            results.append(result)
+
+        except Exception as e:
+            raise RuntimeError(
+                f"Chunk {chunk_index + 1} failed: {e}"
+            ) from e
+
+
+# ============================================================
+# RESTORE ORIGINAL DOCUMENT ORDER
+# ============================================================
+
+results.sort(
+    key=lambda item: item["index"]
+)
+
+all_supported_claims = []
+
+total_extracted = 0
+supported = 0
+partial = 0
+unsupported = 0
+contradicted = 0
+
+for result in results:
+
+    total_extracted += len(
+        result["claims"]
+    )
+
+    supported += result["supported"]
+    partial += result["partial"]
+    unsupported += result["unsupported"]
+    contradicted += result["contradicted"]
+
+    model_calls += result[
+        "model_calls"
+    ]
+
+    all_supported_claims.extend(
+        result["supported_claims"]
     )
 
 
@@ -423,12 +621,99 @@ final_summary = generate_summary(
 
 model_calls += 1
 
-if final_summary is None:
+if final_summary is None or not final_summary.strip():
     raise RuntimeError(
         "No final summary was generated."
     )
 
+final_summary = clean_plain_text(
+    final_summary
+)
 
+print(
+    "Initial final summary words:",
+    count_words(final_summary)
+)
+
+
+# ============================================================
+# COMPRESS IF TOO LONG
+# ============================================================
+
+compression_calls = 0
+
+current_words = count_words(
+    final_summary
+)
+
+if current_words > args.summary_words:
+
+    if current_words <= int(
+        args.summary_words * 1.10
+    ):
+        print(
+            f"Small overshoot ({current_words} words). "
+            "Using deterministic sentence-safe truncation."
+        )
+
+        final_summary = truncate_to_word_limit(
+            final_summary,
+            args.summary_words
+        )
+
+    else:
+        print(
+            f"Large overshoot ({current_words} words). "
+            "Using one LLM compression call."
+        )
+
+        compress_prompt = compress_template.render(
+            summary=final_summary,
+            summary_length=args.summary_words
+        )
+
+        compressed = generate_summary(
+            compress_prompt
+        )
+
+        model_calls += 1
+        compression_calls += 1
+
+        if compressed is not None and compressed.strip():
+
+            final_summary = clean_plain_text(
+                compressed
+            )
+
+            print(
+                "Words after compression:",
+                count_words(final_summary)
+            )
+
+        else:
+            print(
+                "Compression returned no text."
+            )
+
+
+# ============================================================
+# FINAL WORD-LIMIT FALLBACK
+# ============================================================
+
+if count_words(final_summary) > args.summary_words:
+
+    print(
+        "Applying final deterministic word-limit fallback..."
+    )
+
+    final_summary = truncate_to_word_limit(
+        final_summary,
+        args.summary_words
+    )
+
+final_summary = clean_plain_text(
+    final_summary
+)
 # ============================================================
 # SAVE FINAL SUMMARY
 # ============================================================
@@ -511,6 +796,15 @@ print(
 print(
     "Model calls:",
     model_calls
+)
+
+print(
+    "Compression calls:",
+    compression_calls
+)
+print(
+    "Parallel workers:",
+    args.workers
 )
 
 print(

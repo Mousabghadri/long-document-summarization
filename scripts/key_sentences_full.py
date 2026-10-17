@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -15,6 +16,10 @@ from src.chunking import chunk_document
 from src.llm import generate_summary
 
 
+# ============================================================
+# HELPERS
+# ============================================================
+
 def normalize_text(text):
     return re.sub(r"\s+", " ", text).strip()
 
@@ -22,6 +27,117 @@ def normalize_text(text):
 def count_words(text):
     return len(text.split())
 
+
+def clean_plain_text(text):
+    lines = text.splitlines()
+    cleaned_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if re.fullmatch(r"-{3,}", stripped):
+            continue
+
+        stripped = re.sub(
+            r"^#{1,6}\s*",
+            "",
+            stripped
+        )
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [
+                cell.strip()
+                for cell in stripped.strip("|").split("|")
+            ]
+
+            if all(
+                re.fullmatch(r":?-+:?", cell)
+                for cell in cells
+            ):
+                continue
+
+            if len(cells) == 2:
+                stripped = f"{cells[0]}: {cells[1]}"
+            else:
+                stripped = " - ".join(cells)
+
+        stripped = re.sub(
+            r"^[-*+]\s+",
+            "- ",
+            stripped
+        )
+
+        stripped = stripped.replace("**", "")
+        stripped = stripped.replace("__", "")
+
+        stripped = re.sub(
+            r"(?<!\*)\*(?!\*)",
+            "",
+            stripped
+        )
+
+        stripped = re.sub(
+            r"(?<!_)_(?!_)",
+            "",
+            stripped
+        )
+
+        cleaned_lines.append(stripped)
+
+    text = "\n".join(cleaned_lines)
+
+    text = re.sub(
+        r"\s+#{1,6}\s+",
+        "\n\n",
+        text
+    )
+
+    text = re.sub(
+        r"\n{3,}",
+        "\n\n",
+        text
+    )
+
+    return text.strip()
+
+
+def truncate_to_word_limit(text, max_words):
+    sentences = re.split(
+        r"(?<=[.!?])\s+",
+        text.strip()
+    )
+
+    selected = []
+    total_words = 0
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+
+        if not sentence:
+            continue
+
+        words = sentence.split()
+
+        if total_words + len(words) > max_words:
+            break
+
+        selected.append(sentence)
+        total_words += len(words)
+
+    result = " ".join(selected).strip()
+
+    result = re.sub(
+        r"\n?\s*\d+\.\s*$",
+        "",
+        result
+    ).strip()
+
+    return result
+
+
+# ============================================================
+# ARGUMENTS
+# ============================================================
 
 parser = argparse.ArgumentParser(
     description="Extract validated support sentences and generate a grounded summary"
@@ -66,6 +182,13 @@ parser.add_argument(
     help="Optional extra instructions for summary focus"
 )
 
+parser.add_argument(
+    "--workers",
+    type=int,
+    default=5,
+    help="Maximum number of chunks processed in parallel"
+)
+
 args = parser.parse_args()
 
 
@@ -85,6 +208,7 @@ chunks = chunk_document(
 print("Total chunks:", len(chunks))
 print("Context size:", args.context_size)
 print("Target summary:", args.summary_words, "words")
+print("Parallel workers:", args.workers)
 
 
 # ============================================================
@@ -104,6 +228,8 @@ summary_template = env.get_template(
 )
 
 
+
+
 # ============================================================
 # OUTPUT FOLDER
 # ============================================================
@@ -121,29 +247,14 @@ os.makedirs(
 
 
 # ============================================================
-# STATS
+# PROCESS ONE CHUNK
 # ============================================================
 
-all_validated_sentences = []
-
-total_extracted = 0
-total_validated = 0
-
-model_calls = 0
-start_time = time.time()
-
-
-# ============================================================
-# STEP 1: EXTRACT + VALIDATE SUPPORT SENTENCES
-# ============================================================
-
-for i, chunk in enumerate(
-    chunks,
-    start=1
-):
+def process_chunk(index, chunk):
+    chunk_number = index + 1
 
     print(
-        f"\nProcessing chunk {i}/{len(chunks)}..."
+        f"\nStarting chunk {chunk_number}/{len(chunks)}..."
     )
 
     prompt = extract_template.render(
@@ -153,6 +264,7 @@ for i, chunk in enumerate(
 
     result = None
     max_retries = 3
+    calls = 0
 
     for attempt in range(
         1,
@@ -163,21 +275,21 @@ for i, chunk in enumerate(
                 prompt
             )
 
-            model_calls += 1
+            calls += 1
 
             if result is not None and result.strip():
                 break
 
             print(
-                f"Chunk {i}: empty response "
+                f"Chunk {chunk_number}: empty response "
                 f"(attempt {attempt}/{max_retries})"
             )
 
         except RuntimeError as e:
-            model_calls += 1
+            calls += 1
 
             print(
-                f"Chunk {i}: model error "
+                f"Chunk {chunk_number}: model error "
                 f"(attempt {attempt}/{max_retries}): {e}"
             )
 
@@ -186,7 +298,7 @@ for i, chunk in enumerate(
 
     if result is None or not result.strip():
         raise RuntimeError(
-            f"No model output for chunk {i} "
+            f"No model output for chunk {chunk_number} "
             f"after {max_retries} attempts"
         )
 
@@ -195,10 +307,6 @@ for i, chunk in enumerate(
         for line in result.splitlines()
         if line.strip()
     ]
-
-    total_extracted += len(
-        extracted_sentences
-    )
 
     normalized_chunk = normalize_text(
         chunk
@@ -217,22 +325,94 @@ for i, chunk in enumerate(
                 sentence
             )
 
-    total_validated += len(
-        validated_sentences
+    print(
+        f"Chunk {chunk_number} complete — "
+        f"Extracted: {len(extracted_sentences)}, "
+        f"Validated: {len(validated_sentences)}"
     )
+
+    return {
+        "index": index,
+        "extracted": extracted_sentences,
+        "validated": validated_sentences,
+        "model_calls": calls
+    }
+
+
+# ============================================================
+# STATS
+# ============================================================
+
+start_time = time.time()
+
+total_extracted = 0
+total_validated = 0
+model_calls = 0
+
+all_validated_sentences = []
+
+
+# ============================================================
+# STEP 1: PARALLEL EXTRACTION + VALIDATION
+# ============================================================
+
+print(
+    "\nStarting parallel key-sentence extraction..."
+)
+
+results = []
+
+with ThreadPoolExecutor(
+    max_workers=args.workers
+) as executor:
+
+    futures = {
+        executor.submit(
+            process_chunk,
+            i,
+            chunk
+        ): i
+        for i, chunk in enumerate(chunks)
+    }
+
+    for future in as_completed(futures):
+
+        chunk_index = futures[future]
+
+        try:
+            result = future.result()
+            results.append(result)
+
+        except Exception as e:
+            raise RuntimeError(
+                f"Chunk {chunk_index + 1} failed: {e}"
+            ) from e
+
+
+# ============================================================
+# RESTORE ORIGINAL DOCUMENT ORDER
+# ============================================================
+
+results.sort(
+    key=lambda item: item["index"]
+)
+
+for result in results:
+
+    total_extracted += len(
+        result["extracted"]
+    )
+
+    total_validated += len(
+        result["validated"]
+    )
+
+    model_calls += result[
+        "model_calls"
+    ]
 
     all_validated_sentences.extend(
-        validated_sentences
-    )
-
-    print(
-        "Extracted:",
-        len(extracted_sentences)
-    )
-
-    print(
-        "Validated:",
-        len(validated_sentences)
+        result["validated"]
     )
 
 
@@ -286,7 +466,58 @@ if final_summary is None or not final_summary.strip():
         "No final summary was generated."
     )
 
+final_summary = clean_plain_text(
+    final_summary
+)
 
+print(
+    "Initial final summary words:",
+    count_words(final_summary)
+)
+
+# ============================================================
+# STEP 3: LENGTH CONTROL
+# ============================================================
+
+current_words = count_words(
+    final_summary
+)
+
+if current_words > args.summary_words:
+
+    print(
+        f"Summary is {current_words} words. "
+        "Applying deterministic sentence-safe truncation."
+    )
+
+    final_summary = truncate_to_word_limit(
+        final_summary,
+        args.summary_words
+    )
+
+final_summary = clean_plain_text(
+    final_summary
+)
+
+
+# ============================================================
+# FINAL WORD-LIMIT FALLBACK
+# ============================================================
+
+if count_words(final_summary) > args.summary_words:
+
+    print(
+        "Applying final deterministic word-limit fallback..."
+    )
+
+    final_summary = truncate_to_word_limit(
+        final_summary,
+        args.summary_words
+    )
+
+final_summary = clean_plain_text(
+    final_summary
+)
 # ============================================================
 # SAVE FINAL SUMMARY
 # ============================================================
@@ -349,6 +580,11 @@ print(
 print(
     "Model calls:",
     model_calls
+)
+
+print(
+    "Parallel workers:",
+    args.workers
 )
 
 print(

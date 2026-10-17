@@ -581,6 +581,189 @@ LLM-as-a-Judge:
 The optimization therefore reduced model calls without causing an obvious quality collapse in this experiment.
 
 ---
+## Parallelization Experiment
+
+Claims and Key Sentence processing were parallelized across document chunks.
+
+The summarization methodology itself was kept the same:
+
+- Claims: claim extraction and verification remain unchanged, but different chunks are processed concurrently.
+- Key Sentences: sentence extraction and exact-source validation remain unchanged, but different chunks are processed concurrently.
+- Results are restored to original document order before final summary generation.
+
+The purpose of this experiment was to reduce wall-clock runtime without fundamentally changing the summarization methods.
+
+### Runtime Before and After Parallelization
+
+| Document | Method | Previous Runtime | Parallel Runtime |
+|---|---|---:|---:|
+| AI Act | Claims | 1489.65 s | 209.49 s |
+| AI Act | Key Sentences | 1045.82 s | 159.47 s |
+| GDPR | Claims | 842.77 s | 204.65 s |
+| GDPR | Key Sentences | 598.76 s | 244.03 s |
+| DGA | Claims | 917.53 s | 145.77 s |
+| DGA | Key Sentences | 168.15 s | 141.94 s |
+| Data Act | Claims | 1159.95 s | 283.19 s |
+| Data Act | Key Sentences | 474.33 s | 265.92 s |
+
+All final parallel runs completed in under five minutes.
+
+The largest improvements occurred for the longer documents, especially the AI Act.
+
+Parallelization reduces wall-clock time rather than the underlying number of extraction or verification operations.
+
+### Parallel Claims Results
+
+| Document | Words | ROUGE-1 | ROUGE-2 | ROUGE-L | Semantic | Grounding | Judge |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| AI Act | 978 | 0.3259 | 0.0894 | 0.1518 | 0.7515 | 96.30% | 4 |
+| GDPR | 987 | 0.5531 | 0.1684 | 0.1753 | 0.8229 | 97.50% | 3 |
+| DGA | 975 | 0.5009 | 0.1357 | 0.1839 | 0.8165 | 100.00% | 2 |
+| Data Act | 999 | 0.3670 | 0.0839 | 0.1410 | 0.7279 | 97.14% | 3 |
+
+### Parallel Key Sentence Results
+
+| Document | Words | ROUGE-1 | ROUGE-2 | ROUGE-L | Semantic | Grounding | Judge |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| AI Act | 981 | 0.3259 | 0.0868 | 0.1435 | 0.6887 | 94.29% | 3 |
+| GDPR | 964 | 0.5685 | 0.1928 | 0.1988 | 0.5887 | 100.00% | 2 |
+| DGA | 961 | 0.4620 | 0.1316 | 0.1689 | 0.6609 | 96.77% | 2 |
+| Data Act | 993 | 0.3658 | 0.0766 | 0.1595 | 0.6369 | 100.00% | 2 |
+
+### Main Parallelization Observation
+
+Parallelization produced a large reduction in wall-clock runtime while preserving strong source grounding.
+
+However, reference alignment remained mixed.
+
+The faster runs did not eliminate the main document-level weakness identified earlier: summaries can remain highly grounded while giving disproportionate attention to locally important procedural or technical details.
+
+Claims generally provided the stronger balance between runtime, semantic similarity, and LLM-as-a-Judge performance.
+
+Key Sentences was often slightly faster and achieved very high grounding, but its document-level emphasis was weaker on several targets.
+
+## Context Size Experiment: 8k vs 16k
+
+A larger context size was tested to investigate whether reducing the number of chunks would further reduce runtime.
+
+The AI Act was used for this comparison because it is the longest target document.
+
+### Claims
+
+| Context Size | Chunks | Model Calls | Runtime | Final Words |
+|---|---:|---:|---:|---:|
+| 8k | 16 | 34 | 209.49 s | 978 |
+| 16k | 8 | 18 | 292.41 s | 999 |
+
+Increasing the context size from 8k to 16k reduced the number of chunks and model calls substantially.
+
+However, wall-clock runtime increased from 209.49 seconds to 292.41 seconds.
+
+### Key Sentences
+
+| Context Size | Chunks | Model Calls | Runtime | Final Words | Validation Rate |
+|---|---:|---:|---:|---:|---:|
+| 8k | 16 | 17 | 159.47 s | 981 | 64.56% |
+| 16k | 8 | 9 | 487.95 s | 966 | 53.85% |
+
+For Key Sentences, the 16k configuration was substantially slower despite using almost half as many model calls.
+
+The validation rate was also lower in this run.
+
+### Main Observation
+
+Reducing the number of chunks does not necessarily reduce total runtime.
+
+Larger chunks increase the computational cost and latency of individual model requests.
+
+In the tested AI Act runs, the 8k context size provided a better wall-clock trade-off than 16k for both Claims and Key Sentences.
+
+## SummN-Style Multi-Stage Experiment
+
+A SummN-style multi-stage summarization approach was implemented as an additional experimental method.
+
+The implementation follows the general inference idea of:
+
+- splitting the document into chunks
+- summarizing chunks independently in parallel
+- merging summaries in multiple stages
+- producing a final summary of approximately 1000 words
+
+This implementation is inspired by the SummN approach, but is not intended as an exact reproduction of the original training procedure.
+
+### Initial DGA Experiment
+
+The DGA was used as the first test document.
+
+Initial configuration:
+
+- context size: 8000 tokens
+- 5 initial chunks
+- chunk summary target: 500 words
+- intermediate merge target: 800 words
+- final target: 1000 words
+- merge group size: 4
+- 5 parallel workers
+
+Several implementation iterations were required because the model initially produced outputs substantially longer than the requested limits.
+
+Output-token control and deterministic sentence-safe truncation were then introduced for intermediate stages.
+
+### Final DGA SummN-Style Run
+
+Results:
+
+- initial chunks: 5
+- merge stages: 2
+- model calls: 7
+- final summary length: 994 words
+- runtime: 692.90 seconds
+
+Standard metrics:
+
+- ROUGE-1: 0.4525
+- ROUGE-2: 0.1118
+- ROUGE-L: 0.1651
+- Semantic similarity: 0.7960
+
+Source grounding:
+
+- 36 supported statements
+- 0 partial
+- 0 unsupported
+- 0 contradicted
+- grounding: 100%
+
+LLM-as-a-Judge:
+
+- Coverage: 4
+- Emphasis: 3
+- Alignment: 3
+- Relevance: 4
+- Coherence: 3
+- Overall: 3
+
+### Comparison with Other DGA Methods
+
+The SummN-style approach achieved perfect automatic source grounding and a higher LLM-as-a-Judge score than the final parallel Claims and Key Sentence runs.
+
+However, it was substantially slower:
+
+- SummN-style: 692.90 seconds
+- Parallel Claims: 145.77 seconds
+- Parallel Key Sentences: 141.94 seconds
+
+Its standard reference metrics were also lower than the parallel Claims results.
+
+The judge still identified the same broader problem found in the other chunk-based methods: the generated summary emphasized technical and procedural implementation details more strongly than the strategic context and document-level framing present in the human reference.
+
+### Main SummN Observation
+
+The experiment shows that multi-stage parallel summarization can reduce the order dependence of Sequential Summarization while retaining very strong source grounding.
+
+However, in the current implementation, the additional merge stages introduce significant latency.
+
+SummN-style summarization therefore appears useful as an additional comparison method, but the current version does not outperform parallel Claims in the combined runtime-quality trade-off.
 
 ## Main Conclusions
 
@@ -606,6 +789,21 @@ The experiments produced several main findings.
 
 10. Sequential efficiency can be improved by avoiding unnecessary LLM compression calls.
 
+11. Parallelization provides a major runtime improvement for Claims and Key Sentence methods without fundamentally changing their processing logic.
+
+12. In the final parallel experiments, all Claims and Key Sentence runs completed in under five minutes while maintaining strong source grounding.
+
+13. Reducing the number of chunks by increasing context size does not necessarily reduce wall-clock runtime. In the AI Act experiment, 16k context produced fewer model calls but was slower than 8k for both Claims and Key Sentences.
+
+14. Larger context windows therefore involve a trade-off between fewer requests and greater latency per request.
+
+15. The SummN-style multi-stage experiment achieved 100% automatic source grounding on the DGA and an overall LLM-as-a-Judge score of 3/5, but required substantially more runtime than the parallel Claims and Key Sentence methods.
+
+16. The SummN-style result reinforces the broader finding that hierarchical or multi-stage summarization does not automatically solve document-level emphasis problems.
+
+17. Among the currently tested methods, parallel Claims provides one of the strongest overall trade-offs between runtime, semantic similarity, grounding, and document-level quality.
+
+18. Improving global coverage and document-level importance estimation remains more important than further optimizing local extraction alone.
 ---
 
 ## Current Research Direction
@@ -618,7 +816,16 @@ The current work focuses on:
 - preserving source grounding
 - improving cross-domain generalization
 - avoiding document-specific prompt assumptions
+- improving document-level importance estimation
 
 The next planned direction is more robust decontextualized and stand-alone claim extraction.
 
 This is intended to improve the quality and usability of intermediate claims before continuing with broader long-document summarization experiments.
+
+A second important direction is improving global importance estimation across chunks.
+
+The experiments show that local extraction quality alone is not sufficient when different parts of a document have different structural roles.
+
+Future work should therefore investigate methods that can better distinguish locally important information from information that is globally important to the document as a whole.
+
+Hierarchical approaches such as the SummN-style experiment may remain useful as comparison methods, but further optimization should focus on document-level coverage and emphasis rather than only reducing the number of model calls.

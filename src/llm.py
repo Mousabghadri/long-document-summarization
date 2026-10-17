@@ -12,16 +12,31 @@ client = OpenAI(
 MODEL_NAME = os.getenv("MODEL_NAME")
 
 
-def generate_summary(prompt: str, model_name: str = None) -> str:
+def generate_summary(
+    prompt: str,
+    model_name: str = None,
+    max_tokens: int = None,
+    reasoning_effort: str = None
+) -> str:
 
-    response = client.chat.completions.create(
-        model=model_name or MODEL_NAME,
-        messages=[
+    request_args = {
+        "model": model_name or MODEL_NAME,
+        "messages": [
             {
                 "role": "user",
                 "content": prompt
             }
         ]
+    }
+
+    if max_tokens is not None:
+        request_args["max_tokens"] = max_tokens
+
+    if reasoning_effort is not None:
+        request_args["reasoning_effort"] = reasoning_effort
+
+    response = client.chat.completions.create(
+        **request_args
     )
 
     content = response.choices[0].message.content

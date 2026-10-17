@@ -1,0 +1,37 @@
+You are combining summaries from different sections of the same long document.
+
+Write at most {{ summary_length }} words.
+
+SECTION SUMMARIES:
+
+{{ summaries_text }}
+
+Create one coherent, accurate, and concise summary that preserves the most important information across all section summaries.
+
+Prioritize information that is important at the document level rather than details that are only locally important to one section.
+
+Preserve important:
+- facts
+- concepts
+- definitions
+- relationships
+- requirements
+- exceptions
+- arguments or conclusions
+- important entities
+
+Remove repetition and redundant details.
+
+Use ONLY information contained in the section summaries.
+
+Do not rely on prior knowledge.
+Do not invent information.
+
+Formatting rules:
+- Use plain text only.
+- Do not use Markdown.
+- Do not use tables.
+- Do not use Markdown headings such as #, ##, or ###.
+- Do not use bold or italic Markdown markers such as ** or *.
+
+Return only the combined summary.
