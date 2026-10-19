@@ -39,9 +39,10 @@ Does the generated summary represent the same overall picture and priorities as 
 Important rules:
 
 - The generated summary may contain correct information that is not present in the human reference.
-- Do NOT treat such additional information as an error solely because the reference omitted it.
-- Only report a direct conflict when the generated summary clearly contradicts something stated in the human reference.
-- Distinguish between:
+- Do NOT treat additional information as an error solely because the human reference omitted it.
+- A statement is NOT a direct conflict merely because it is absent from the human reference.
+- Use "direct_conflicts_with_reference" only when the generated summary states something logically incompatible with an explicit statement in the human reference.
+- Distinguish clearly between:
   a) missing an important reference theme,
   b) adding extra detail,
   c) directly contradicting the reference.
@@ -72,6 +73,8 @@ Return VALID JSON only in this exact format:
 
 Scoring:
 
+Return integer scores only.
+
 1 = very poor
 2 = poor
 3 = acceptable
@@ -83,3 +86,4 @@ Be strict but fair.
 Do not penalize correct extra information simply because the human reference is shorter.
 
 Return JSON only.
+

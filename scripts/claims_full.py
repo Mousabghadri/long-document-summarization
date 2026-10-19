@@ -420,26 +420,43 @@ def process_chunk(index, chunk):
         summary=claims_text
     )
 
-    verify_result = generate_summary(
-        verify_prompt
-    )
+    verified_json = None
+    last_error = None
 
-    calls += 1
+    for attempt in range(2):
 
-    if verify_result is None:
-        raise RuntimeError(
-            f"No verification output for chunk {chunk_number}"
+        verify_result = generate_summary(
+            verify_prompt
         )
 
-    try:
-        verified_json = json.loads(
-            verify_result
-        )
+        calls += 1
 
-    except json.JSONDecodeError as e:
+        if verify_result is None:
+            last_error = RuntimeError(
+                f"No verification output for chunk {chunk_number}"
+            )
+            continue
+
+        try:
+            verified_json = json.loads(
+                verify_result
+            )
+            break
+
+        except json.JSONDecodeError as e:
+            last_error = e
+
+            print(
+                f"Chunk {chunk_number}: invalid verification JSON "
+                f"(attempt {attempt + 1}/2)"
+            )
+
+    if verified_json is None:
         raise RuntimeError(
-            f"Invalid verification JSON for chunk {chunk_number}"
-        ) from e
+            f"Invalid verification JSON for chunk {chunk_number} "
+            "after 2 attempts"
+        ) from last_error
+
 
     verified_claims = verified_json.get(
         "claims",

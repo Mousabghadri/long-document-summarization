@@ -52,15 +52,24 @@ STRICT RULES:
 3. Absolute qualifiers such as "only", "all", "must", "always",
    or "never" must also be supported by the source.
 
-4. Do not reinterpret evidence to make the claim true.
+4. Verify entity identity and attribution exactly.
+   If a name, title, label, role, number, date, or description is attached to the wrong entity, the claim is NOT fully supported.
 
-5. Do not correct the claim.
+5. Parenthetical descriptions and appositives are part of the claim and must be independently supported.
+   For example, if a regulation number is followed by a title in parentheses, the source must support that exact title-number association.
 
-6. Evidence must be copied only from the source.
+6. Correct relationships do not compensate for incorrect entity binding.
+   If the source supports that A amends B, but the claim assigns B the title or identity of A, mark the claim as partial or contradicted depending on the source.
 
-7. If the label is unsupported, evidence should be null.
+7. Do not reinterpret evidence to make the claim true.
 
-8. The number of returned results MUST equal the number of input claims.
+8. Do not correct the claim.
+
+9. Evidence must be copied only from the source.
+
+10. If the label is unsupported, evidence should be null.
+
+11. The number of returned results MUST equal the number of input claims.
 
 Return ONLY valid JSON:
 

@@ -40,6 +40,7 @@ parser.add_argument(
 
 args = parser.parse_args()
 
+
 # ============================================================
 # LOAD FILES
 # ============================================================
@@ -104,6 +105,7 @@ if not result:
     )
 
 result = result.strip()
+
 if result.startswith("```"):
     result = result.strip("`").strip()
 
@@ -128,6 +130,33 @@ except json.JSONDecodeError:
     print(result)
 
     raise
+
+
+# ============================================================
+# VALIDATE SCORES
+# ============================================================
+
+score_fields = [
+    "coverage_score",
+    "emphasis_score",
+    "relevance_score",
+    "coherence_score",
+    "reference_alignment_score",
+    "overall_score",
+]
+
+for field in score_fields:
+    value = parsed.get(field)
+
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= 5
+    ):
+        raise ValueError(
+            f"Invalid judge score for {field}: {value}. "
+            "Expected an integer between 1 and 5."
+        )
 
 
 # ============================================================
@@ -194,11 +223,13 @@ print(
 
 print()
 print("Verdict:")
+
 print(
     parsed.get("verdict")
 )
 
 print()
+
 print(
     "Saved:",
     output_path
