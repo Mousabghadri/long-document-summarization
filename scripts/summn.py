@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import os
 import json
 import re
 import sys
@@ -190,48 +192,52 @@ model_calls = 0
 model_calls_lock = Lock()
 
 
-def call_model(
-    prompt,
-    max_tokens,
-    max_retries=3
-):
-
+def call_model(prompt, max_tokens, max_retries=3):
     global model_calls
 
-    for attempt in range(
-        1,
-        max_retries + 1
-    ):
+    current_limit = max_tokens
 
+    for attempt in range(1, max_retries + 1):
         try:
+            print(
+                f"[API attempt {attempt}/{max_retries}] "
+                f"max_tokens={current_limit}"
+            )
 
             result = generate_summary(
                 prompt,
-                max_tokens=max_tokens,
+                max_tokens=current_limit,
                 reasoning_effort="low"
             )
 
-            with model_calls_lock:
-                model_calls += 1
-
             if result is not None and result.strip():
+                with model_calls_lock:
+                    model_calls += 1
 
-                return clean_plain_text(
-                    result
-                )
+                return clean_plain_text(result)
 
         except RuntimeError as e:
+            error_message = str(e).lower()
 
             print(
                 f"Model error "
                 f"(attempt {attempt}/{max_retries}): {e}"
             )
 
-        if attempt < max_retries:
-
-            time.sleep(
-                2
+            is_length_error = (
+                "token limit" in error_message
+                or "finish_reason=length" in error_message
+                or "reached the token limit" in error_message
             )
+
+            if is_length_error and attempt < max_retries:
+                current_limit = int(current_limit * 1.5)
+                print(
+                    f"Retrying with max_tokens={current_limit}"
+                )
+
+        if attempt < max_retries:
+            time.sleep(2)
 
     raise RuntimeError(
         "Model failed after multiple retries."
@@ -398,6 +404,57 @@ def summarize_chunk(
         summary_length=args.chunk_summary_words
     )
 
+    checkpoint_dir = intermediate_dir / "checkpoints_stage1"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    # The fingerprint includes the exact rendered prompt,
+    # relevant run settings and local model configuration.
+    env_file = PROJECT_ROOT / ".env"
+    env_bytes = env_file.read_bytes() if env_file.exists() else b""
+
+    llm_file = PROJECT_ROOT / "src" / "llm.py"
+    llm_bytes = llm_file.read_bytes() if llm_file.exists() else b""
+
+    fingerprint_data = json.dumps(
+        {
+            "prompt": prompt,
+            "chunk_words": args.chunk_summary_words,
+            "context_size": args.context_size,
+            "model_env_hash": hashlib.sha256(env_bytes).hexdigest(),
+            "llm_code_hash": hashlib.sha256(llm_bytes).hexdigest(),
+            "model_env_override": os.environ.get("MODEL_NAME", ""),
+            "reasoning_effort": "low",
+            "token_budget_multiplier": 3.0,
+            "retry_policy": "length_x1.5_v1",
+        },
+        sort_keys=True
+    )
+
+    fingerprint = hashlib.sha256(
+        fingerprint_data.encode("utf-8")
+    ).hexdigest()
+
+    checkpoint_path = (
+        checkpoint_dir
+        / f"chunk_{chunk_number:03d}_{fingerprint[:16]}.json"
+    )
+
+    if checkpoint_path.exists():
+        saved = json.loads(
+            checkpoint_path.read_text(encoding="utf-8")
+        )
+
+        if (
+            saved.get("fingerprint") == fingerprint
+            and isinstance(saved.get("summary"), str)
+            and saved["summary"].strip()
+        ):
+            print(f"Chunk {chunk_number}: loaded from checkpoint")
+            return {
+                "index": index,
+                "summary": saved["summary"]
+            }
+
     summary = call_model(
         prompt,
         max_tokens=words_to_max_tokens(
@@ -410,6 +467,19 @@ def summarize_chunk(
         args.chunk_summary_words,
         f"Chunk {chunk_number}"
     )
+
+    checkpoint_data = {
+        "fingerprint": fingerprint,
+        "chunk_number": chunk_number,
+        "summary": summary
+    }
+
+    temp_path = checkpoint_path.with_suffix(".tmp")
+    temp_path.write_text(
+        json.dumps(checkpoint_data, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+    os.replace(temp_path, checkpoint_path)
 
     print(
         f"Chunk {chunk_number} complete - "

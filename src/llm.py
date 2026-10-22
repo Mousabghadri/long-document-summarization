@@ -38,8 +38,21 @@ def generate_summary(
     response = client.chat.completions.create(
         **request_args
     )
+    choice = response.choices[0]
+    content = choice.message.content
+    finish_reason = choice.finish_reason
 
-    content = response.choices[0].message.content
+    print(
+    f"[LLM] model={request_args['model']} "
+    f"finish_reason={finish_reason} "
+    f"max_tokens={max_tokens}"
+    )
+
+    if finish_reason == "length":
+     raise RuntimeError(
+        "LLM output reached the token limit. "
+        "The generated text may be incomplete."
+    )
 
     if content is None:
         raise RuntimeError(

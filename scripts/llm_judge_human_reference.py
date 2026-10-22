@@ -132,6 +132,24 @@ except json.JSONDecodeError:
     raise
 
 
+# Save the raw judge response for debugging
+debug_path = Path(args.output_file).with_name(
+    Path(args.output_file).stem + "_raw_debug.json"
+)
+
+debug_path.parent.mkdir(
+    parents=True,
+    exist_ok=True
+)
+
+debug_path.write_text(
+    result,
+    encoding="utf-8"
+)
+
+print("Raw judge response saved:", debug_path)
+
+
 # ============================================================
 # VALIDATE SCORES
 # ============================================================
