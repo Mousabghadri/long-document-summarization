@@ -1,37 +1,17 @@
-You are compressing a summary of a long document.
+You are shortening a summary of a long document.
 
 CURRENT SUMMARY:
 
 {{ summary }}
 
-Rewrite the summary so that it is approximately {{ summary_length }} words.
+Rewrite the summary so that it is at most {{ summary_length }} words (aim for roughly {{ (summary_length * 0.9) | int }} to {{ summary_length }} words).
 
-IMPORTANT LENGTH REQUIREMENT:
-- The final answer should be close to {{ summary_length }} words.
-- Do not exceed {{ summary_length }} words unless absolutely necessary.
-- Aggressively remove lower-priority information when needed to meet the target length.
-
-Preserve only the most important:
-- core facts
-- main concepts
-- essential definitions
-- important requirements
-- critical exceptions
-- major conclusions
-
-Remove:
-- examples unless essential
-- repeated information
-- minor details
-- background explanations
-- redundant wording
-- secondary facts
-- unnecessary qualifications
-- long lists
-
-Rules:
-- Do not introduce new information.
-- Use only information already contained in the current summary.
-- Prefer concise sentences.
+- Keep the most important information: overall purpose, main concepts, essential definitions, important requirements, critical exceptions and major conclusions.
+- Remove repetition, minor details, examples that are not essential and redundant wording first.
 - Merge related information where possible.
-- Return only the compressed summary.
+- Do not introduce new information; use only what the current summary contains.
+- Do not change the actor, scope, condition or meaning of any statement.
+
+{% include "_output_format.j2" %}
+
+Return only the shortened summary.

@@ -9,7 +9,12 @@ from jinja2 import Environment, FileSystemLoader
 from src.document_loader import load_document
 from src.chunking import chunk_document
 from src.llm import generate_summary
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import unicodedata
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.postprocess import clean_plain_text, split_sentences
 
 # ============================================================
 # ARGUMENTS
@@ -45,6 +50,13 @@ parser.add_argument(
     type=str,
     default="",
     help="Optional comma-separated chunk numbers, e.g. 4,9,13,16"
+)
+
+parser.add_argument(
+    "--workers",
+    type=int,
+    default=5,
+    help="Source chunks verified in parallel"
 )
 
 args = parser.parse_args()
@@ -95,119 +107,37 @@ def extract_json(text):
     return None
 
 def split_summary_into_statements(text):
-    # Normalize Unicode characters and spaces
+    """
+    Split a summary into factual statements with the SAME rules for every
+    method.
+
+    The previous version removed a hard-coded list of GDPR section headings
+    and nothing else, so headings produced by other methods/documents were
+    counted as "statements" and labelled unsupported - lowering the grounding
+    score of any method that used headings.  Heading-like lines (short lines
+    without sentence punctuation, or lines ending with ':') are now dropped
+    generically.
+    """
     text = unicodedata.normalize("NFKC", text)
-
-    text = (
-        text
-        .replace("\u00a0", " ")
-        .replace("\u202f", " ")
-        .replace("\u200b", "")
-        .replace("**", "")
-        .replace("__", "")
-    )
-
-    # Remove known headings
-    headings = [
-        "Major Themes of the Supported Claims – Compressed Summary (≈ 1 000 words)",
-        "Major Themes of the Supported Claims - Compressed Summary (≈ 1 000 words)",
-        "Origin and Legal Basis",
-        "Scope, Definitions, and Exclusions",
-        "Lawful Processing, Consent, and Derogations",
-        "Data-Subject Rights",
-        "Controller and Processor Obligations",
-        "International Transfers and Adequacy",
-        "Governance, Supervisory Authorities, and the European Data Protection Board (EDPB)",
-        "Enforcement, Complaints, and Penalties",
-    ]
-
-    for heading in headings:
-        text = text.replace(heading, " ")
-
-
-    text = re.sub(
-        r"(?<!\d)\b[1-9]\.\s+",
-        " ",
-        text
-    )
-
-    # Remove bullet markers
-    text = re.sub(
-        r"\s*[-•–—]\s+",
-        " ",
-        text
-    )
-
-    # Collapse whitespace
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
-
-    # Protect legal abbreviations before sentence splitting
-    text = re.sub(
-        r"\bArt\.\s*(\d+)",
-        r"Art__DOT__\1",
-        text
-    )
-
-    text = re.sub(
-        r"\bArts\.\s*(\d+)",
-        r"Arts__DOT__\1",
-        text
-    )
-
-    text = text.replace(
-        "e.g.",
-        "e__DOT__g__DOT__"
-    )
-
-    text = text.replace(
-        "i.e.",
-        "i__DOT__e__DOT__"
-    )
-
-    # Split into factual sentences
-    parts = re.split(
-        r"(?<=[.!?])\s+(?=[A-Z“\"'])",
-        text
-    )
+    text = (text.replace("\u00a0", " ").replace("\u202f", " ").replace("\u200b", ""))
+    text = clean_plain_text(text)
 
     statements = []
-
-    for part in parts:
-        part = part.strip()
-
-        if not part:
+    for line in text.splitlines():
+        line = line.strip()
+        line = re.sub(r"^(?:[-\u2022\u2013\u2014]\s+|\(?\d{1,2}[.)]\s+|\(?[a-z][.)]\s+)", "", line)
+        if not line:
             continue
-
-        # Restore abbreviations
-        part = re.sub(
-            r"\bArt__DOT__(\d+)",
-            r"Art. \1",
-            part
+        is_heading = (
+            line.endswith(":")
+            or (not re.search(r"[.!?;)\"\u201d]$", line) and len(line.split()) <= 12)
         )
-
-        part = re.sub(
-            r"\bArts__DOT__(\d+)",
-            r"Arts. \1",
-            part
-        )
-
-        part = part.replace(
-            "e__DOT__g__DOT__",
-            "e.g."
-        )
-
-        part = part.replace(
-            "i__DOT__e__DOT__",
-            "i.e."
-        )
-
-        statements.append(part)
-
+        if is_heading:
+            continue
+        statements.extend(s for s in split_sentences(line) if len(s.split()) >= 3)
     return statements
+
+
 def load_existing_results(output_path):
     if not output_path.exists():
         return {}
@@ -345,7 +275,7 @@ results_by_chunk = load_existing_results(
 max_retries = 3
 
 
-for i in selected_chunks:
+def verify_chunk(i):
 
     if i < 1 or i > len(chunks):
 
@@ -353,7 +283,7 @@ for i in selected_chunks:
             f"Skipping invalid chunk number: {i}"
         )
 
-        continue
+        return
 
     chunk = chunks[i - 1]
 
@@ -429,14 +359,22 @@ for i in selected_chunks:
             f"Chunk {i}: FAILED after {max_retries} attempts"
         )
 
-        continue
+        return
 
 
-    results_by_chunk[i] = parsed
+    with results_lock:
+        results_by_chunk[i] = parsed
 
     print(
         f"Chunk {i}: success"
     )
+
+
+
+results_lock = threading.Lock()
+
+with ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
+    list(executor.map(verify_chunk, selected_chunks))
 
 
 # ============================================================

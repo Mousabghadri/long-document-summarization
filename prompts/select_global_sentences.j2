@@ -1,0 +1,23 @@
+You are selecting the most important sentences of a long document.
+
+The sentences below were extracted from all parts of the document, in document order.
+Each sentence has an ID and the part of the document it comes from.
+
+CANDIDATE SENTENCES:
+
+{{ candidates }}
+
+Select exactly {{ budget }} sentences that together give the best overview of the WHOLE document.
+
+Selection rules:
+- Judge importance at the level of the whole document, not within one part.
+- Prefer sentences about the document's purpose, main concepts, definitions, core rules, rights, obligations, exceptions and conclusions.
+- Prefer sentences that cover different topics; avoid selecting several sentences that say nearly the same thing.
+- Do not give every part of the document the same number of sentences: parts with more important content should receive more.
+- Background, introductory or procedural sentences should be selected only if they are needed to understand the main content.
+
+Return ONLY valid JSON in this format:
+
+{
+  "selected_ids": [1, 5, 12]
+}مش

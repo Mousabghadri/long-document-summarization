@@ -1,0 +1,20 @@
+LENGTH:
+- Write at most {{ summary_length }} words.
+- Use most of the budget: aim for roughly {{ (summary_length * 0.9) | int }} to {{ summary_length }} words.
+
+CONTENT AND EMPHASIS:
+- Begin with one or two sentences stating the document's overall purpose and main subject, when the input supports this.
+- Give priority to information that is important for the document as a whole over details that matter only locally.
+- Cover the major topics present in the input before expanding detailed subtopics, and keep the level of detail reasonably balanced across them.
+- Preserve important facts, definitions, requirements, rights, obligations, exceptions, conditions, relationships and conclusions.
+- Do not let background, examples, repeated context or procedural details dominate the summary.
+- Remove repetition before removing unique important information.
+
+FAITHFULNESS:
+- Use only information contained in the input above. Do not use prior knowledge. Do not invent information.
+- Do not change the actor, subject, scope, condition, exception or meaning of any statement.
+- Do not generalise a statement that applies to a specific actor, category, object or condition into a broader statement.
+- Do not create relationships between pieces of information unless the input states them.
+- If a detail is uncertain, leave it out.
+
+{% include "_output_format.j2" %}

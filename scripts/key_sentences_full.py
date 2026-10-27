@@ -1,7 +1,9 @@
+
 import argparse
 import os
 import re
 import sys
+import unicodedata
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -9,590 +11,174 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from jinja2 import Environment, FileSystemLoader
-
 from src.document_loader import load_document
 from src.chunking import chunk_document
 from src.llm import generate_summary
+from src.postprocess import count_words, finalize_summary, prompt_env
+from src.run_metadata import write_metadata, print_run_summary
 
 
-# ============================================================
-# HELPERS
-# ============================================================
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+                         "\u2013": "-", "\u2014": "-", "\u00ad": None})
+
 
 def normalize_text(text):
-    return re.sub(r"\s+", " ", text).strip()
+    """
+    Key used for exact-copy validation.  All whitespace is removed and quote /
+    dash variants are unified, so a sentence only passes if its characters
+    appear verbatim in the chunk, but line breaks, hyphenation spaces or PDF
+    extraction artefacts inside the source cannot make a correct copy fail.
+    """
+    text = unicodedata.normalize("NFKC", text).translate(_QUOTES)
+    return re.sub(r"\s+", "", text)
 
 
-def count_words(text):
-    return len(text.split())
+def strip_line_markers(line):
+    """Remove list markers / quotes the model may add despite instructions."""
+    line = line.strip()
+    line = re.sub(r"^(?:[-*•]\s+|\d+[.)]\s+)", "", line)
+    if len(line) > 1 and line[0] in "\"'“" and line[-1] in "\"'”":
+        line = line[1:-1]
+    return line.strip()
 
-
-def clean_plain_text(text):
-    lines = text.splitlines()
-    cleaned_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-
-        if re.fullmatch(r"-{3,}", stripped):
-            continue
-
-        stripped = re.sub(
-            r"^#{1,6}\s*",
-            "",
-            stripped
-        )
-
-        if stripped.startswith("|") and stripped.endswith("|"):
-            cells = [
-                cell.strip()
-                for cell in stripped.strip("|").split("|")
-            ]
-
-            if all(
-                re.fullmatch(r":?-+:?", cell)
-                for cell in cells
-            ):
-                continue
-
-            if len(cells) == 2:
-                stripped = f"{cells[0]}: {cells[1]}"
-            else:
-                stripped = " - ".join(cells)
-
-        stripped = re.sub(
-            r"^[-*+]\s+",
-            "- ",
-            stripped
-        )
-
-        stripped = stripped.replace("**", "")
-        stripped = stripped.replace("__", "")
-
-        stripped = re.sub(
-            r"(?<!\*)\*(?!\*)",
-            "",
-            stripped
-        )
-
-        stripped = re.sub(
-            r"(?<!_)_(?!_)",
-            "",
-            stripped
-        )
-
-        cleaned_lines.append(stripped)
-
-    text = "\n".join(cleaned_lines)
-
-    text = re.sub(
-        r"\s+#{1,6}\s+",
-        "\n\n",
-        text
-    )
-
-    text = re.sub(
-        r"\n{3,}",
-        "\n\n",
-        text
-    )
-
-    return text.strip()
-
-
-def truncate_to_word_limit(text, max_words):
-    sentences = re.split(
-        r"(?<=[.!?])\s+",
-        text.strip()
-    )
-
-    selected = []
-    total_words = 0
-
-    for sentence in sentences:
-        sentence = sentence.strip()
-
-        if not sentence:
-            continue
-
-        words = sentence.split()
-
-        if total_words + len(words) > max_words:
-            break
-
-        selected.append(sentence)
-        total_words += len(words)
-
-    result = " ".join(selected).strip()
-
-    result = re.sub(
-        r"\n?\s*\d+\.\s*$",
-        "",
-        result
-    ).strip()
-
-    return result
-
-
-# ============================================================
-# ARGUMENTS
-# ============================================================
 
 parser = argparse.ArgumentParser(
-    description="Extract validated support sentences and generate a grounded summary"
-)
-
-parser.add_argument(
-    "file",
-    help="Path to the document file"
-)
-
-parser.add_argument(
-    "--context-size",
-    type=int,
-    default=8000,
-    help="Maximum source tokens per chunk"
-)
-
-parser.add_argument(
-    "--max-sentences",
-    type=int,
-    default=10,
-    help="Maximum support sentences per chunk"
-)
-
-parser.add_argument(
-    "--summary-words",
-    type=int,
-    default=2000,
-    help="Target final summary length in words"
-)
-
-parser.add_argument(
-    "--output-name",
-    required=True,
-    help="Output name, e.g. ai_act or gdpr"
-)
-
-parser.add_argument(
-    "--additional-instructions",
-    type=str,
-    default="",
-    help="Optional extra instructions for summary focus"
-)
-
-parser.add_argument(
-    "--workers",
-    type=int,
-    default=5,
-    help="Maximum number of chunks processed in parallel"
-)
-
+    description="Extract validated support sentences and generate a grounded summary")
+parser.add_argument("file", help="Path to the document file")
+parser.add_argument("--context-size", type=int, default=8000, help="Maximum source tokens per chunk")
+parser.add_argument("--max-sentences", type=int, default=10, help="Maximum support sentences per chunk")
+parser.add_argument("--summary-words", type=int, default=1000, help="Target final summary length in words")
+parser.add_argument("--output-name", required=True, help="Output name, e.g. ai_act or gdpr")
+parser.add_argument("--additional-instructions", type=str, default="",
+                    help="Optional extra instructions (do NOT use in the fair comparison)")
+parser.add_argument("--workers", type=int, default=5, help="Maximum number of chunks processed in parallel")
+parser.add_argument("--summary-prompt", default="summarize_from_support.j2",
+                    help="Prompt template for the final summary step")
+parser.add_argument("--support-file", default=None,
+                    help="Reuse support sentences saved by an earlier run (skips extraction; "
+                         "for prompt experiments, so only the final step differs)")
 args = parser.parse_args()
 
-
-# ============================================================
-# LOAD DOCUMENT
-# ============================================================
-
-document_text = load_document(
-    args.file
-)
-
-chunks = chunk_document(
-    document_text,
-    max_tokens=args.context_size
-)
+document_text = load_document(args.file)
+chunks = chunk_document(document_text, max_tokens=args.context_size)
+if not chunks:
+    raise ValueError("No chunks were created from the document.")
 
 print("Total chunks:", len(chunks))
 print("Context size:", args.context_size)
 print("Target summary:", args.summary_words, "words")
 print("Parallel workers:", args.workers)
 
+env = prompt_env()
+extract_template = env.get_template("extract_key_sentences.j2")
+summary_template = env.get_template(args.summary_prompt)
 
-# ============================================================
-# LOAD PROMPTS
-# ============================================================
+output_dir = os.path.join("outputs", "method_outputs", args.output_name)
+os.makedirs(output_dir, exist_ok=True)
 
-env = Environment(
-    loader=FileSystemLoader("prompts")
-)
-
-extract_template = env.get_template(
-    "extract_key_sentences.j2"
-)
-
-summary_template = env.get_template(
-    "summarize_from_support.j2"
-)
-
-
-
-
-# ============================================================
-# OUTPUT FOLDER
-# ============================================================
-
-output_dir = os.path.join(
-    "outputs",
-    "method_outputs",
-    args.output_name
-)
-
-os.makedirs(
-    output_dir,
-    exist_ok=True
-)
-
-
-# ============================================================
-# PROCESS ONE CHUNK
-# ============================================================
 
 def process_chunk(index, chunk):
     chunk_number = index + 1
+    print(f"\nStarting chunk {chunk_number}/{len(chunks)}...")
+    try:
+        result = generate_summary(
+            extract_template.render(source_text=chunk, max_sentences=args.max_sentences),
+            purpose="key_sentences_extract")
+    except RuntimeError as e:
+        # A chunk with nothing extractable (tariff tables, annex lists ...) can
+        # make the model return no text; skip that chunk instead of losing the
+        # whole document.  Other errors still fail the run.
+        if "no text content" not in str(e):
+            raise
+        print(f"Chunk {chunk_number}: model returned no sentences - chunk skipped")
+        return {"index": index, "extracted": [], "validated": [], "skipped": True}
 
-    print(
-        f"\nStarting chunk {chunk_number}/{len(chunks)}..."
-    )
+    extracted = [strip_line_markers(l) for l in result.splitlines() if l.strip()]
+    extracted = [l for l in extracted if l]
+    normalized_chunk = normalize_text(chunk)
 
-    prompt = extract_template.render(
-        source_text=chunk,
-        max_sentences=args.max_sentences
-    )
+    validated, seen = [], set()
+    for sentence in extracted:
+        norm = normalize_text(sentence)
+        if len(sentence.split()) >= 3 and norm in normalized_chunk and norm not in seen:
+            validated.append(sentence)
+            seen.add(norm)
+    # the budget is enforced deterministically, so no method can exceed it
+    validated = validated[:args.max_sentences]
 
-    result = None
-    max_retries = 3
-    calls = 0
+    print(f"Chunk {chunk_number} complete - Extracted: {len(extracted)}, "
+          f"Validated: {len(validated)}")
+    return {"index": index, "extracted": extracted, "validated": validated}
 
-    for attempt in range(
-        1,
-        max_retries + 1
-    ):
-        try:
-            result = generate_summary(
-                prompt
-            )
-
-            calls += 1
-
-            if result is not None and result.strip():
-                break
-
-            print(
-                f"Chunk {chunk_number}: empty response "
-                f"(attempt {attempt}/{max_retries})"
-            )
-
-        except RuntimeError as e:
-            calls += 1
-
-            print(
-                f"Chunk {chunk_number}: model error "
-                f"(attempt {attempt}/{max_retries}): {e}"
-            )
-
-        if attempt < max_retries:
-            time.sleep(2)
-
-    if result is None or not result.strip():
-        raise RuntimeError(
-            f"No model output for chunk {chunk_number} "
-            f"after {max_retries} attempts"
-        )
-
-    extracted_sentences = [
-        line.strip()
-        for line in result.splitlines()
-        if line.strip()
-    ]
-
-    normalized_chunk = normalize_text(
-        chunk
-    )
-
-    validated_sentences = []
-
-    for sentence in extracted_sentences:
-
-        normalized_sentence = normalize_text(
-            sentence
-        )
-
-        if normalized_sentence in normalized_chunk:
-            validated_sentences.append(
-                sentence
-            )
-
-    print(
-        f"Chunk {chunk_number} complete — "
-        f"Extracted: {len(extracted_sentences)}, "
-        f"Validated: {len(validated_sentences)}"
-    )
-
-    return {
-        "index": index,
-        "extracted": extracted_sentences,
-        "validated": validated_sentences,
-        "model_calls": calls
-    }
-
-
-# ============================================================
-# STATS
-# ============================================================
 
 start_time = time.time()
 
-total_extracted = 0
-total_validated = 0
-model_calls = 0
+if args.support_file:
+    reused = [l.strip() for l in open(args.support_file, encoding="utf-8") if l.strip()]
+    print(f"\nReusing {len(reused)} support sentences from {args.support_file} (no extraction)")
+    results = [{"index": 0, "extracted": reused, "validated": reused}]
+else:
+    print("\nStarting parallel key-sentence extraction...")
+    results = []
+if not args.support_file:
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {executor.submit(process_chunk, i, c): i for i, c in enumerate(chunks)}
+        for future in as_completed(futures):
+            i = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as e:
+                raise RuntimeError(f"Chunk {i + 1} failed: {e}") from e
 
-all_validated_sentences = []
+results.sort(key=lambda r: r["index"])
+total_extracted = sum(len(r["extracted"]) for r in results)
+all_validated = [s for r in results for s in r["validated"]]
 
+support_path = os.path.join(output_dir, f"{args.output_name}_support_sentences.txt")
+with open(support_path, "w", encoding="utf-8") as f:
+    for sentence in all_validated:
+        f.write(sentence + "\n")
 
-# ============================================================
-# STEP 1: PARALLEL EXTRACTION + VALIDATION
-# ============================================================
+if not all_validated:
+    raise RuntimeError("No validated support sentences - cannot build a summary.")
 
-print(
-    "\nStarting parallel key-sentence extraction..."
-)
+print("\nGenerating final summary from validated support...")
+draft = generate_summary(
+    summary_template.render(support_text="\n".join(all_validated),
+                            summary_length=args.summary_words,
+                            additional_instructions=args.additional_instructions),
+    purpose="final_summary")
 
-results = []
-
-with ThreadPoolExecutor(
-    max_workers=args.workers
-) as executor:
-
-    futures = {
-        executor.submit(
-            process_chunk,
-            i,
-            chunk
-        ): i
-        for i, chunk in enumerate(chunks)
-    }
-
-    for future in as_completed(futures):
-
-        chunk_index = futures[future]
-
-        try:
-            result = future.result()
-            results.append(result)
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Chunk {chunk_index + 1} failed: {e}"
-            ) from e
-
-
-# ============================================================
-# RESTORE ORIGINAL DOCUMENT ORDER
-# ============================================================
-
-results.sort(
-    key=lambda item: item["index"]
-)
-
-for result in results:
-
-    total_extracted += len(
-        result["extracted"]
-    )
-
-    total_validated += len(
-        result["validated"]
-    )
-
-    model_calls += result[
-        "model_calls"
-    ]
-
-    all_validated_sentences.extend(
-        result["validated"]
-    )
-
-
-# ============================================================
-# SAVE SUPPORT SENTENCES
-# ============================================================
-
-support_path = os.path.join(
-    output_dir,
-    f"{args.output_name}_support_sentences.txt"
-)
-
-with open(
-    support_path,
-    "w",
-    encoding="utf-8"
-) as f:
-
-    for sentence in all_validated_sentences:
-        f.write(
-            sentence + "\n"
-        )
-
-
-# ============================================================
-# STEP 2: GENERATE FINAL SUMMARY
-# ============================================================
-
-support_text = "\n".join(
-    all_validated_sentences
-)
-
-print(
-    "\nGenerating final summary from validated support..."
-)
-
-summary_prompt = summary_template.render(
-    support_text=support_text,
-    summary_length=args.summary_words,
-    additional_instructions=args.additional_instructions
-)
-
-final_summary = generate_summary(
-    summary_prompt
-)
-
-model_calls += 1
-
-if final_summary is None or not final_summary.strip():
-    raise RuntimeError(
-        "No final summary was generated."
-    )
-
-final_summary = clean_plain_text(
-    final_summary
-)
-
-print(
-    "Initial final summary words:",
-    count_words(final_summary)
-)
-
-# ============================================================
-# STEP 3: LENGTH CONTROL
-# ============================================================
-
-current_words = count_words(
-    final_summary
-)
-
-if current_words > args.summary_words:
-
-    print(
-        f"Summary is {current_words} words. "
-        "Applying deterministic sentence-safe truncation."
-    )
-
-    final_summary = truncate_to_word_limit(
-        final_summary,
-        args.summary_words
-    )
-
-final_summary = clean_plain_text(
-    final_summary
-)
-
-
-# ============================================================
-# FINAL WORD-LIMIT FALLBACK
-# ============================================================
-
-if count_words(final_summary) > args.summary_words:
-
-    print(
-        "Applying final deterministic word-limit fallback..."
-    )
-
-    final_summary = truncate_to_word_limit(
-        final_summary,
-        args.summary_words
-    )
-
-final_summary = clean_plain_text(
-    final_summary
-)
-# ============================================================
-# SAVE FINAL SUMMARY
-# ============================================================
+final_summary, final_info = finalize_summary(
+    draft, args.summary_words,
+    compress_call=lambda p: generate_summary(p, purpose="final_compress"))
+final_words = count_words(final_summary)
 
 summary_path = os.path.join(
-    output_dir,
-    f"{args.output_name}_key_sentences_summary_{args.summary_words}_words.txt"
-)
+    output_dir, f"{args.output_name}_key_sentences_summary_{args.summary_words}_words.txt")
+with open(summary_path, "w", encoding="utf-8") as f:
+    f.write(final_summary)
 
-with open(
-    summary_path,
-    "w",
-    encoding="utf-8"
-) as f:
+validation_rate = len(all_validated) / total_extracted * 100 if total_extracted else 0
+meta_path = write_metadata(
+    output_dir, "key_sentences", args.file, document_text, start_time,
+    args.summary_words, final_words, len(chunks), args.context_size,
+    extra={
+        "workers": args.workers,
+        "max_sentences_per_chunk": args.max_sentences,
+        "extracted_sentences": total_extracted,
+        "validated_sentences": len(all_validated),
+        "validation_rate": round(validation_rate, 2),
+        "support_words": count_words("\n".join(all_validated)),
+        "final_length_control": final_info,
+        "additional_instructions": args.additional_instructions or None,
+        "summary_prompt": args.summary_prompt,
+        "skipped_chunks": sum(1 for r in results if r.get("skipped")),
+        "support_reused_from": args.support_file,
+    })
 
-    f.write(
-        final_summary
-    )
-
-
-# ============================================================
-# FINAL STATS
-# ============================================================
-
-runtime = time.time() - start_time
-
-validation_rate = (
-    total_validated / total_extracted * 100
-    if total_extracted > 0
-    else 0
-)
-
-print("\n" + "=" * 80)
-print("EXTRACT-SUPPORT SUMMARIZATION COMPLETE")
-print("=" * 80)
-
-print(
-    "Extracted sentences:",
-    total_extracted
-)
-
-print(
-    "Validated support sentences:",
-    total_validated
-)
-
-print(
-    f"Validation rate: {validation_rate:.2f}%"
-)
-
-print(
-    "Final summary words:",
-    count_words(final_summary)
-)
-
-print(
-    f"Runtime: {runtime:.2f} seconds"
-)
-
-print(
-    "Model calls:",
-    model_calls
-)
-
-print(
-    "Parallel workers:",
-    args.workers
-)
-
-print(
-    "Support saved:",
-    support_path
-)
-
-print(
-    "Summary saved:",
-    summary_path
-)
+print_run_summary("extract-support (key sentences)", final_words, start_time)
+print("Validated support sentences:", len(all_validated), f"({validation_rate:.2f}%)")
+print("Support saved:", support_path)
+print("Summary saved:", summary_path)
+print("Metadata saved:", meta_path)

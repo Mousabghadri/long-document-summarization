@@ -4,7 +4,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from src.llm import generate_summary
+from src.llm import generate_summary, extract_json
 
 
 # ============================================================
@@ -96,7 +96,8 @@ print("Running LLM-as-a-Judge...")
 
 result = generate_summary(
     prompt,
-    model_name=args.model
+    model_name=args.model,
+    purpose="judge"
 )
 
 if not result:
@@ -106,30 +107,14 @@ if not result:
 
 result = result.strip()
 
-if result.startswith("```"):
-    result = result.strip("`").strip()
+parsed = extract_json(result)
 
-    if result.lower().startswith("json"):
-        result = result[4:].strip()
-
-
-# ============================================================
-# PARSE JSON
-# ============================================================
-
-try:
-    parsed = json.loads(
-        result
-    )
-
-except json.JSONDecodeError:
-
+if not isinstance(parsed, dict):
     print()
     print("Model returned invalid JSON.")
     print()
     print(result)
-
-    raise
+    raise ValueError("Judge returned invalid JSON.")
 
 
 # Save the raw judge response for debugging

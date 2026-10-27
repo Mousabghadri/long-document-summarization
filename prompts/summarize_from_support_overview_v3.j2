@@ -1,0 +1,32 @@
+You are writing an overview of a long legal document from sentences that were extracted from it.
+
+SUPPORTING SOURCE SENTENCES (in document order):
+
+{{ support_text }}
+
+{% if additional_instructions %}
+Additional instructions:
+{{ additional_instructions }}
+{% endif %}
+
+Write a high-level overview of the document based on these sentences.
+Combine related information into connected prose; do not simply copy the sentences as a list.
+
+ORGANISE THE OVERVIEW IN THIS ORDER (skip a part only if the sentences contain nothing about it):
+1. Identification: the name and number of the act and, if stated, when it enters into force and applies.
+2. Purpose and context: what the act aims to achieve and why it was adopted.
+3. Scope: who and what the act applies to, and the main exclusions.
+4. Structure: the main regimes, frameworks or parts the act establishes, named explicitly.
+5. Key definitions: the most important legal concepts the act defines.
+6. Core rules: the most important rights, obligations, procedures, governance bodies and penalties.
+
+Spend most of the words on parts 2 to 4 and on the most important rules in part 6.
+Prefer what matters for understanding the act as a whole over operational details such as fees, deadlines, forms or procedural steps, unless they are central to the act.
+
+TWO RULES:
+- Do not write evaluative or concluding sentences that state no fact from the document, for example "the scope is broad" or "overall, the act creates a balanced framework".
+- Do not state how many regimes, parts or categories there are unless the supporting sentences state that number.
+
+{% include "_final_guidance.j2" %}
+
+Return only the overview.

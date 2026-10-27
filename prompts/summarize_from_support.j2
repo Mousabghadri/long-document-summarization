@@ -1,6 +1,6 @@
-You are writing a grounded summary of a long document.
+You are writing a summary of a long document from sentences that were extracted from it.
 
-SUPPORTING SOURCE SENTENCES:
+SUPPORTING SOURCE SENTENCES (in document order):
 
 {{ support_text }}
 
@@ -9,21 +9,9 @@ Additional instructions:
 {{ additional_instructions }}
 {% endif %}
 
-Write a clear and coherent summary of approximately {{ summary_length }} words.
+Write a clear and coherent summary of the document based on these sentences.
+Combine related information into connected prose; do not simply copy the sentences as a list.
 
-Rules:
-- Use only information contained in the supporting source sentences.
-- Do not use prior knowledge.
-- Do not invent information.
-- Combine related information into natural connected prose.
-- Remove repetition.
-- Preserve important facts, definitions, requirements, exceptions, relationships, and conclusions.
-- Do not simply copy the supporting sentences as a list.
-- Use plain text only.
-- Do not use Markdown.
-- Do not use tables.
-- Do not use Markdown headings such as #, ##, or ###.
-- Do not use bold or italic Markdown markers such as ** or *.
-- If structure is useful, use simple plain-text section titles and numbered lists.
+{% include "_final_guidance.j2" %}
 
 Return only the final summary.

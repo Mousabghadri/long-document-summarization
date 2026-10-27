@@ -1,7 +1,5 @@
 You are incrementally updating a running summary of a long document.
 
-Keep the updated summary approximately {{ target_tokens }} tokens long.
-
 CURRENT SUMMARY:
 
 {{ current_summary }}
@@ -10,25 +8,12 @@ NEW SOURCE CHUNK:
 
 {{ chunk }}
 
-Update the current summary using the new source chunk.
+Update the current summary using the new source chunk so that it summarizes everything read so far.
 
-Rules:
+- Keep important information already contained in the current summary.
+- Add important information from the new source chunk.
+- The input for this task is the current summary together with the new source chunk.
 
-- preserve important information already contained in the current summary
-- add important information from the new source chunk
-- preserve important facts, concepts, definitions, relationships, requirements, exceptions and conclusions
-- avoid unnecessary repetition
-- keep the summary coherent
-
-IMPORTANT:
-
-Use only:
-
-1. the current summary
-2. the new source chunk
-
-Do not rely on prior knowledge.
-
-Do not invent information.
+{% include "_final_guidance.j2" %}
 
 Return only the updated summary.

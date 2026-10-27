@@ -1,0 +1,13 @@
+openai>=1.40
+python-dotenv
+jinja2
+tiktoken
+pypdf
+pypdfium2
+python-docx
+rouge-score
+sentence-transformers
+numpy
+# optional
+bert-score      # compare_methods.py evaluate --bertscore
+datasets        # scripts/prepare_datasets.py

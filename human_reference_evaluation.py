@@ -1,176 +1,102 @@
+
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from rouge_score import rouge_scorer
-from sentence_transformers import SentenceTransformer, util
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from rouge_score import rouge_scorer  # noqa: E402
+
+from src.postprocess import clean_plain_text, count_words, split_sentences  # noqa: E402
 
 
 def load_text(path):
-    return Path(path).read_text(encoding="utf-8").strip()
+    return clean_plain_text(Path(path).read_text(encoding="utf-8").strip())
 
 
-def count_words(text):
-    return len(text.split())
+def sentences_of(text):
+    out = []
+    for para in text.split("\n"):
+        out.extend(split_sentences(para))
+    return [s for s in out if s.strip()]
+
+
+def semantic_similarity(reference, summary, model_name):
+    import numpy as np
+    from sentence_transformers import SentenceTransformer
+
+    model = SentenceTransformer(model_name)
+
+    def doc_vector(text):
+        sents = sentences_of(text) or [text]
+        emb = model.encode(sents, normalize_embeddings=True, convert_to_numpy=True)
+        # weight sentences by length so many tiny fragments do not dominate
+        weights = np.array([max(len(s.split()), 1) for s in sents], dtype=float)
+        vec = (emb * weights[:, None]).sum(axis=0) / weights.sum()
+        return vec / (np.linalg.norm(vec) + 1e-12)
+
+    return float(doc_vector(reference) @ doc_vector(summary))
+
+
+def bertscore(reference, summary, model_type):
+    from bert_score import score
+
+    p, r, f = score([summary], [reference], model_type=model_type, lang="en", verbose=False)
+    return float(p[0]), float(r[0]), float(f[0])
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Compare one generated summary against a human reference."
-    )
-
-    parser.add_argument(
-        "reference",
-        help="Path to the human reference summary"
-    )
-
-    parser.add_argument(
-        "summary",
-        help="Path to the generated summary"
-    )
-
-    parser.add_argument(
-        "--method",
-        default="unknown",
-        help="Method name, e.g. claims, key_sentences, sequential"
-    )
-
-    parser.add_argument(
-        "--output-file",
-        required=True,
-        help="Where to save the evaluation JSON"
-    )
-
+    parser = argparse.ArgumentParser(description="Compare one generated summary against a human reference.")
+    parser.add_argument("reference", help="Path to the human reference summary")
+    parser.add_argument("summary", help="Path to the generated summary")
+    parser.add_argument("--method", default="unknown")
+    parser.add_argument("--output-file", required=True)
+    parser.add_argument("--semantic-model", default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument("--no-semantic", action="store_true", help="Skip semantic similarity")
+    parser.add_argument("--bertscore", action="store_true", help="Also compute BERTScore")
+    parser.add_argument("--bertscore-model", default="allenai/longformer-large-4096")
     args = parser.parse_args()
 
-    # ============================================================
-    # LOAD TEXTS
-    # ============================================================
+    reference = load_text(args.reference)
+    summary = load_text(args.summary)
+    ref_words, sum_words = count_words(reference), count_words(summary)
 
-    human_reference = load_text(args.reference)
-    summary_text = load_text(args.summary)
-
-    human_words = count_words(human_reference)
-    summary_words = count_words(summary_text)
-
-    print("Human reference words:", human_words)
-    print("Generated summary words:", summary_words)
-
-    # ============================================================
-    # ROUGE
-    # ============================================================
-
-    rouge = rouge_scorer.RougeScorer(
-        ["rouge1", "rouge2", "rougeL"],
-        use_stemmer=True
-    )
-
-    rouge_scores = rouge.score(
-        human_reference,
-        summary_text
-    )
-
-    rouge1 = rouge_scores["rouge1"].fmeasure
-    rouge2 = rouge_scores["rouge2"].fmeasure
-    rougeL = rouge_scores["rougeL"].fmeasure
-
-    # ============================================================
-    # SEMANTIC SIMILARITY
-    # ============================================================
-
-    print("Loading semantic similarity model...")
-
-    semantic_model = SentenceTransformer(
-        "sentence-transformers/all-MiniLM-L6-v2"
-    )
-
-    human_embedding = semantic_model.encode(
-        human_reference,
-        convert_to_tensor=True
-    )
-
-    summary_embedding = semantic_model.encode(
-        summary_text,
-        convert_to_tensor=True
-    )
-
-    semantic_similarity = util.cos_sim(
-        human_embedding,
-        summary_embedding
-    ).item()
-
-    # ============================================================
-    # LENGTH RATIO
-    # ============================================================
-
-    length_ratio = (
-        summary_words / human_words
-        if human_words > 0
-        else 0
-    )
-
-    # ============================================================
-    # RESULT
-    # ============================================================
+    scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL", "rougeLsum"], use_stemmer=True)
+    # rougeLsum expects one sentence per line - apply the SAME splitting to both texts
+    scores = scorer.score("\n".join(sentences_of(reference)), "\n".join(sentences_of(summary)))
 
     result = {
         "method": args.method,
         "human_reference_path": args.reference,
         "summary_path": args.summary,
-        "human_reference_words": human_words,
-        "summary_words": summary_words,
-        "length_ratio": round(length_ratio, 3),
-        "rouge_1_f1": round(rouge1, 4),
-        "rouge_2_f1": round(rouge2, 4),
-        "rouge_l_f1": round(rougeL, 4),
-        "semantic_similarity": round(
-            semantic_similarity,
-            4
-        )
+        "human_reference_words": ref_words,
+        "summary_words": sum_words,
+        "length_ratio": round(sum_words / ref_words, 3) if ref_words else 0,
     }
+    for key, name in [("rouge1", "rouge_1"), ("rouge2", "rouge_2"), ("rougeL", "rouge_l"),
+                      ("rougeLsum", "rouge_lsum")]:
+        s = scores[key]
+        result[f"{name}_f1"] = round(s.fmeasure, 4)
+        result[f"{name}_precision"] = round(s.precision, 4)
+        result[f"{name}_recall"] = round(s.recall, 4)
 
-    # ============================================================
-    # PRINT
-    # ============================================================
+    if not args.no_semantic:
+        result["semantic_similarity"] = round(
+            semantic_similarity(reference, summary, args.semantic_model), 4)
+        result["semantic_method"] = f"length-weighted mean sentence embedding ({args.semantic_model})"
 
-    print()
-    print("=" * 70)
-    print("STANDARD METRICS")
-    print("=" * 70)
+    if args.bertscore:
+        p, r, f = bertscore(reference, summary, args.bertscore_model)
+        result.update({"bertscore_precision": round(p, 4), "bertscore_recall": round(r, 4),
+                       "bertscore_f1": round(f, 4), "bertscore_model": args.bertscore_model})
 
-    print("Method:", args.method)
-    print("Summary words:", summary_words)
-    print("Length ratio:", result["length_ratio"])
-    print("ROUGE-1:", result["rouge_1_f1"])
-    print("ROUGE-2:", result["rouge_2_f1"])
-    print("ROUGE-L:", result["rouge_l_f1"])
-    print(
-        "Semantic similarity:",
-        result["semantic_similarity"]
-    )
+    out = Path(args.output_file)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # ============================================================
-    # SAVE
-    # ============================================================
-
-    output_path = Path(args.output_file)
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    output_path.write_text(
-        json.dumps(
-            result,
-            indent=2,
-            ensure_ascii=False
-        ),
-        encoding="utf-8"
-    )
-
-    print()
-    print("Saved:", output_path)
+    print(json.dumps(result, indent=2))
+    print("Saved:", out)
 
 
 if __name__ == "__main__":
