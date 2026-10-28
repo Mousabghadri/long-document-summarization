@@ -1,3 +1,49 @@
+#!/usr/bin/env python3
+"""
+compare_methods.py - one driver for a FAIR comparison of the summarization
+strategies of the paper on the same documents:
+
+    direct, sequential, mapreduce, key_sentences (extract-support), claims, summn
+
+Run it from the project root.  Three resumable steps:
+
+    python compare_methods.py generate
+    python compare_methods.py evaluate
+    python compare_methods.py report
+
+Useful options:
+    --summary-words 1000       fixed target length (default 1000)
+    --target-length reference  target = length of each document's human reference
+                               (x --reference-ratio); recommended for datasets
+    --docs gdpr,dga            only some documents
+    --manifest m.jsonl         documents from a manifest (scripts/prepare_datasets.py)
+    --methods claims,summn     only some methods
+    --model openai/gpt-oss-120b  summarization model for this tag (else MODEL_NAME)
+    --reps 3                   generation repetitions
+    --judge-repeats 3          judge runs per summary
+    --skip-grounding           skip source-grounding verification
+    --bertscore                also compute BERTScore
+    --tag my_run               output folder: outputs/comparison/<tag>
+    --dry-run / --force
+
+What is controlled (and checked) for fairness:
+  * every method runs with the same model and the same generation settings
+    (temperature, seed, reasoning effort, output cap, provider pin) from
+    src/llm.py; the settings are stored with every run and the report flags
+    any run whose settings or prompt files differ from the others;
+  * same chunking (context size) for all chunk-based methods, same target
+    length, same final prompt guidance, same final length-control routine;
+  * Map-Reduce and SummN share stage-1 prompt/budget and merge prompt and
+    differ only in stage organisation;
+  * efficiency is measured identically for all methods: every API request
+    (including retries), prompt/completion/reasoning tokens, summed LLM
+    latency ("serial LLM time", independent of parallelism) and wall time;
+  * jobs run one at a time with rotating method order, each from an empty
+    output folder (no cached intermediate results);
+  * every summary is checked against its target length (+-10%), Direct is
+    flagged when the document had to be truncated, and the judge is repeated
+    so its own noise is visible.
+"""
 from __future__ import annotations
 
 import argparse
@@ -34,7 +80,7 @@ METHODS = ["direct", "sequential", "mapreduce", "key_sentences", "key_sentences_
            "key_sentences_overview", "key_sentences_overview_v2",
            "key_sentences_overview_v3",
            "key_sentences_overview_s20",
-           "mapreduce_overlap", "claims", "summn"]
+           "mapreduce_overlap", "title_only", "claims", "summn"]
 LABELS = {
     "direct": "Direct",
     "sequential": "Sequential",
@@ -46,6 +92,7 @@ LABELS = {
     "key_sentences_overview_v3": "Extract-support (overview v3)",
     "key_sentences_overview_s20": "Extract-support (overview, 20 sent.)",
     "mapreduce_overlap": "Map-Reduce (overlap)",
+    "title_only": "Title only (memorization probe)",
     "claims": "Claims",
     "summn": "SummN-style",
 }
@@ -241,6 +288,8 @@ def _build_cmd(method: str, src: Path, name: str, words: int, a) -> list:
                 "--intermediate-summary-words", str(a.intermediate_summary_words),
                 "--max-input-tokens", str(a.max_input_tokens),
                 "--workers", k, "--output-name", name]
+    if method == "title_only":
+        return [py, "-m", "scripts.title_only", str(src), "--summary-words", w, "--output-name", name]
     if method == "mapreduce_overlap":
         return [py, "-m", "scripts.mapreduce", str(src), "--context-size", c, "--summary-words", w,
                 "--chunk-summary-words", str(a.chunk_summary_words),
@@ -303,6 +352,7 @@ def expected_summary(method: str, name: str, words: int) -> Path:
         "direct": "direct_summary",
         "mapreduce": "mapreduce_summary",
         "mapreduce_overlap": "mapreduce_summary",
+        "title_only": "title_only_summary",
         "key_sentences": "key_sentences_summary",
         "key_sentences_global": "key_sentences_global_summary",
         "key_sentences_overview": "key_sentences_summary",
@@ -485,6 +535,11 @@ def cmd_generate(a):
 # --------------------------------------------------------------------------
 # EVALUATE
 # --------------------------------------------------------------------------
+def valid_booookscore(p: Path) -> bool:
+    d = load_json(p)
+    return bool(d) and d.get("booookscore") is not None
+
+
 def valid_standard(p: Path) -> bool:
     d = load_json(p)
     return bool(d) and "rouge_lsum_f1" in d
@@ -547,6 +602,12 @@ def cmd_evaluate(a):
                            "--context-size", str(a.context_size),
                            "--output-file", str(ed / "grounding.json")],
                           ed / "grounding.json", valid_grounding))
+        if a.booookscore:
+            cmd = [py, "-m", "scripts.booookscore_eval", summary,
+                   "--output-file", str(ed / "booookscore.json"), "--model", a.judge_model]
+            if a.booookscore_template:
+                cmd += ["--template", a.booookscore_template]
+            tasks.append((f"{key} booookscore", cmd, ed / "booookscore.json", valid_booookscore))
         for i in range(1, a.judge_repeats + 1):
             out = ed / f"judge_{i}.json"
             tasks.append((f"{key} judge#{i}",
@@ -673,6 +734,12 @@ def cell_metrics(base: Path, doc: str, method: str, recs: list) -> dict:
     c["len_ratio"] = mean([s.get("length_ratio") for s in std])
     for k in STD_KEYS:
         c[k] = mean([s.get(k) for s in std])
+    bks = []
+    for r in ok:
+        b = load_json(base / "eval" / safe(doc) / f"{method}_r{r['rep']}" / "booookscore.json")
+        if b and b.get("booookscore") is not None:
+            bks.append(b["booookscore"])
+    c["booookscore"] = mean(bks)
     c["support_pct"] = mean(ground)
     c["not_supported_stmts"] = bad if ground else None
     c["grounding_incomplete"] = incomplete_ground
@@ -684,7 +751,7 @@ def cell_metrics(base: Path, doc: str, method: str, recs: list) -> dict:
 
 
 def macro(cells: list) -> dict:
-    keys = ["words", "len_ratio", "support_pct", "judge_overall_sd"] + STD_KEYS + EFF_KEYS + \
+    keys = ["words", "len_ratio", "support_pct", "booookscore", "judge_overall_sd"] + STD_KEYS + EFF_KEYS + \
         [f"judge_{k}" for k, _ in JUDGE_FIELDS]
     out = {k: mean([c.get(k) for c in cells]) for k in keys}
     for k in ("calls", "total_tokens", "llm_seconds", "runtime"):
@@ -697,17 +764,18 @@ def macro(cells: list) -> dict:
 
 def overall_table(L, methods, cell_groups, title):
     L.append(f"## {title}\n")
-    L.append("| Method | Docs evaluated | Judge overall | Judge sd | Coverage | Emphasis | Alignment | "
-             "R-1 | R-2 | R-Lsum | R-Lsum recall | Semantic | BERTScore | Grounding % |")
-    L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    L.append("| Method | Docs evaluated | R-1 | R-2 | R-Lsum | R-Lsum recall | BERTScore | BooookScore | "
+             "Grounding % | Semantic | Judge overall | Judge sd | Coverage | Emphasis | Alignment |")
+    L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for m in methods:
         mc = macro(cell_groups[m])
-        L.append(f"| {label(m)} | {mc['docs_evaluated']}/{mc['docs']} | {f(mc['judge_overall_score'])} | "
-                 f"{f(mc['judge_overall_sd'])} | {f(mc['judge_coverage_score'])} | "
-                 f"{f(mc['judge_emphasis_score'])} | {f(mc['judge_reference_alignment_score'])} | "
+        L.append(f"| {label(m)} | {mc['docs_evaluated']}/{mc['docs']} | "
                  f"{f(mc['rouge_1_f1'], 3)} | {f(mc['rouge_2_f1'], 3)} | {f(mc['rouge_lsum_f1'], 3)} | "
-                 f"{f(mc['rouge_lsum_recall'], 3)} | {f(mc['semantic_similarity'], 3)} | "
-                 f"{f(mc['bertscore_f1'], 3)} | {f(mc['support_pct'], 1)} |")
+                 f"{f(mc['rouge_lsum_recall'], 3)} | {f(mc['bertscore_f1'], 3)} | "
+                 f"{f(mc['booookscore'], 3)} | {f(mc['support_pct'], 1)} | "
+                 f"{f(mc['semantic_similarity'], 3)} | {f(mc['judge_overall_score'])} | "
+                 f"{f(mc['judge_overall_sd'])} | {f(mc['judge_coverage_score'])} | "
+                 f"{f(mc['judge_emphasis_score'])} | {f(mc['judge_reference_alignment_score'])} |")
     L.append("")
 
 
@@ -835,14 +903,14 @@ def cmd_report(a):
         c0 = table[(d, methods[0])]
         L.append(f"### {d}  ({c0.get('dataset')}, {f(c0.get('document_tokens'), 0)} tokens, "
                  f"target {f(c0.get('target_words'), 0)} words)\n")
-        L.append("| Method | Words | R-1 | R-2 | R-Lsum | Semantic | Grounding % | Not-supp. | "
+        L.append("| Method | Words | R-1 | R-2 | R-Lsum | Semantic | BooookScore | Grounding % | Not-supp. | "
                  "Judge overall (mean +-sd) | Cov | Emph | Align | Calls | Tokens |")
-        L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for m in methods:
             c = table[(d, m)]
             L.append(f"| {label(m)} | {f(c['words'], 0)} | {f(c['rouge_1_f1'], 3)} | "
                      f"{f(c['rouge_2_f1'], 3)} | {f(c['rouge_lsum_f1'], 3)} | "
-                     f"{f(c['semantic_similarity'], 3)} | {f(c['support_pct'], 1)} | "
+                     f"{f(c['semantic_similarity'], 3)} | {f(c['booookscore'], 3)} | {f(c['support_pct'], 1)} | "
                      f"{'-' if c['not_supported_stmts'] is None else c['not_supported_stmts']} | "
                      f"{pm(c['judge_overall_score'], c['judge_overall_sd'])} | "
                      f"{f(c['judge_coverage_score'], 1)} | {f(c['judge_emphasis_score'], 1)} | "
@@ -935,6 +1003,10 @@ def main():
     e.add_argument("--judge-model", default="deepseek/deepseek-v3.2")
     e.add_argument("--judge-repeats", type=int, default=3)
     e.add_argument("--skip-grounding", action="store_true")
+    e.add_argument("--booookscore", action="store_true",
+                   help="also compute BooookScore (share of summary sentences without confusion)")
+    e.add_argument("--booookscore-template", default=None,
+                   help="prompt template for BooookScore (default prompts/booookscore.txt)")
     e.add_argument("--no-semantic", action="store_true")
     e.add_argument("--bertscore", action="store_true")
     e.add_argument("--eval-workers", type=int, default=3)

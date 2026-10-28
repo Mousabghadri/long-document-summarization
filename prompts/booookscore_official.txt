@@ -1,0 +1,142 @@
+Given a book summary and a sentence from that summary, determine
+if that sentence causes any confusion. Types of confusion include
+the following:
+
+- Entity omission: an entity, real or abstract (person, object,
+place, concept, etc.) is mentioned, but key details are missing or
+unclear
+- Event omission: an event is mentioned, but key details are
+missing or unclear
+- Causal omission: the reason or motivation for something is
+missing or unclear
+- Salience: inclusion of trivial details that do not contribute to
+the main storyline
+- Discontinuity: an interruption in the flow of the narrative,
+including but not restricted to: sudden jumps between
+perspectives, time periods, or settings; poor transition between
+sentences or paragraphs; sentences or paragraphs that seem out of
+place; illogical sentence order or summary structure
+- Duplication: redundant repetition of similar information
+- Inconsistency: two parts of the summary contain contradicting
+information
+- Language: grammar issues; confusing wording or phrasing; etc.
+
+For something to qualify as a confusion, it must meet these two
+conditions:
+
+1. Without resolving the confusion, readers would struggle
+substantially to grasp the main narrative, or the summary would
+appear incoherent.
+2. The confusion can't be resolved solely using the information
+provided in the summary.
+
+If the given sentence involves confusion that meets these two
+qualifications, ask relevant clarifying questions and provide
+the confusion types. There can be multiple questions, and keep
+in mind that a sentence may involve multiple types of confusion.
+If the given sentence doesn't involve any confusion, simply say
+"no confusion". Some examples are provided below, followed by the
+summary and sentence that you need to annotate.
+
+---
+
+[Example summary 1]
+
+In the small town of Elm Avenue, teenage twins Aida and Salma are
+inseparable. When Aida mysteriously disappears, Salma recounts
+their childhood and the search for her sister begins...
+
+...
+
+...Throughout their time together, Sara and Juan explore their
+pasts, finding a unique bond and sense of comfort in each other's
+company, as the story moves through its diverse and interconnected
+characters and settings.
+
+
+[Example sentence]
+In the small town of Elm Avenue, teenage twins Aida and Salma are
+inseparable.
+
+[Example response]
+Questions: no confusion
+Types: no confusion
+
+
+[Example sentence]
+When Aida mysteriously disappears, Salma recounts their childhood
+and the search for her sister begins.
+
+[Example response]
+Questions: no confusion
+Types: no confusion
+
+
+[Example sentence]
+Meanwhile, the focus shifts to a new character, Fausto,
+and his relationship with Paz, as they navigate life in a
+hurricane-ravaged Miami neighborhood.
+
+[Example response]
+Questions: Why are we suddenly switching to a new character? Does
+Aida have any connections with Fausto?
+Types: discontinuity
+
+...
+
+---
+
+[Example summary 2]
+
+...
+
+
+[Example sentence]
+Proctor Bennett, a ferryman in Prospera, assists people
+transitioning to new lives upon retirement.
+
+[Example response]
+Questions: Where or what is Prospera?
+Types: entity omission
+
+
+[Example sentence]
+Struggling with dreams and discontent, his wife Elise suggests a
+change in his work.
+
+[Example response]
+Questions: no confusion
+Types: no confusion
+
+
+[Example sentence]
+Deciding to quit being a ferryman, Proctor teaches Caeli how to
+swim.
+
+[Example response]
+Questions: How does quitting being a ferryman relate to teaching a
+girl how to swim?
+Types: discontinuity, causal omission
+
+
+...
+
+---
+
+[Your summary]
+
+{}
+
+
+[Your sentence]
+
+{}
+
+
+[Your response] Determine if it the sentence above involves
+confusion that can't be clarified using information from any part
+of the given summary, and those which, if left unresolved, would
+make the summary highly incoherent or significantly hinder readers
+from understanding the main storyline. If you don't identify any
+confusion like that, simply say "no confusion" for both questions
+and types in your response.

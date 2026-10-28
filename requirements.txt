@@ -8,6 +8,8 @@ python-docx
 rouge-score
 sentence-transformers
 numpy
+markdownify
+beautifulsoup4
 # optional
 bert-score      # compare_methods.py evaluate --bertscore
 datasets        # scripts/prepare_datasets.py

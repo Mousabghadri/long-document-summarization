@@ -1,0 +1,15 @@
+You are summarizing an EU legal act. You are given ONLY its title, not its text.
+
+TITLE:
+
+{{ title }}
+
+Write a summary of this act using everything you know about it: its purpose, scope, main rules, obligations, bodies and procedures. You may use your prior knowledge of the act.
+
+LENGTH:
+- Write at most {{ summary_length }} words.
+- Use most of the budget: aim for roughly {{ (summary_length * 0.9) | int }} to {{ summary_length }} words.
+
+{% include "_output_format.j2" %}
+
+Return only the summary.

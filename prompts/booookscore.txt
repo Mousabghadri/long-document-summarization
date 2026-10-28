@@ -1,0 +1,21 @@
+You are checking a summary of a long legal document for passages that would confuse a reader. You do NOT see the source document: judge only what a careful reader of the summary alone would find confusing.
+
+For each numbered sentence below, decide whether it causes confusion when read as part of the full summary. Use these error types:
+- entity omission: a person, body, act, concept or defined term is mentioned without the context needed to understand it
+- event omission: a rule, obligation, procedure or event is mentioned but key details needed to understand it are missing
+- causal omission: the reason, purpose or condition behind something is missing or unclear
+- discontinuity: an abrupt jump in topic or logic that breaks the flow of the summary
+- salience: a detail that does not contribute to understanding the main points
+- language: grammar, spelling or wording that is ambiguous or hard to parse
+- inconsistency: the sentence contradicts or is inconsistent with another part of the summary
+- duplication: the sentence repeats information already given
+
+FULL SUMMARY:
+{summary}
+
+SENTENCES TO CHECK:
+{sentences}
+
+Return ONLY a JSON list with one object per sentence, in order, of the form
+[{{"questions": "No confusion", "types": "No confusion"}}, {{"questions": "Which authority is meant here?", "types": "entity omission"}}, ...]
+Use "No confusion" for both fields when the sentence is clear. Otherwise give the reader's question(s) and the comma-separated error type(s).

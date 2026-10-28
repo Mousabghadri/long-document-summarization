@@ -15,7 +15,7 @@ def load_document(file_path: str) -> str:
 
     extension = path.suffix.lower()
 
-    if extension == ".txt":
+    if extension in (".txt", ".md"):
 
         return path.read_text(
             encoding="utf-8"
@@ -59,6 +59,10 @@ def load_document(file_path: str) -> str:
 
         return "\n\n".join(pages)
 
+    elif extension in (".html", ".htm"):
+
+        return html_to_markdown(path.read_text(encoding="utf-8", errors="replace"))
+
     elif extension == ".docx":
 
         document = Document(
@@ -80,3 +84,34 @@ def load_document(file_path: str) -> str:
         raise ValueError(
             f"Unsupported file type: {extension}"
         )
+
+
+def html_to_markdown(html: str) -> str:
+    """
+    HTML (e.g. the EUR-Lex HTML version of an act) -> Markdown text.
+    Avoids PDF extraction problems (split words, headers, footers); keeps
+    headings, lists and tables.  Uses markdownify, BeautifulSoup as fallback.
+    """
+    import re
+
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "noscript", "head", "nav", "footer"]):
+            tag.decompose()
+        html = str(soup)
+    except ImportError:
+        soup = None
+
+    try:
+        from markdownify import markdownify
+        text = markdownify(html, heading_style="ATX", strip=["a", "img"])
+    except ImportError:
+        if soup is None:
+            raise ImportError("install markdownify or beautifulsoup4 to read HTML files")
+        text = soup.get_text("\n")
+
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
