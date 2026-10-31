@@ -535,6 +535,11 @@ def cmd_generate(a):
 # --------------------------------------------------------------------------
 # EVALUATE
 # --------------------------------------------------------------------------
+def valid_coverage(p: Path) -> bool:
+    d = load_json(p)
+    return bool(d) and d.get("keypoint_coverage") is not None
+
+
 def valid_booookscore(p: Path) -> bool:
     d = load_json(p)
     return bool(d) and d.get("booookscore") is not None
@@ -593,6 +598,8 @@ def cmd_evaluate(a):
                    "--method", method, "--output-file", str(ed / "standard.json")]
         if a.no_semantic:
             std_cmd.append("--no-semantic")
+        if getattr(a, "language", "english").lower() not in ("english", "en"):
+            std_cmd += ["--language", a.language]
         if a.bertscore:
             std_cmd.append("--bertscore")
         tasks.append((f"{key} standard", std_cmd, ed / "standard.json", valid_standard))
@@ -602,6 +609,11 @@ def cmd_evaluate(a):
                            "--context-size", str(a.context_size),
                            "--output-file", str(ed / "grounding.json")],
                           ed / "grounding.json", valid_grounding))
+        if a.coverage:
+            tasks.append((f"{key} coverage",
+                          [py, "-m", "scripts.keypoint_coverage", str(ref), summary,
+                           "--output-file", str(ed / "coverage.json"), "--model", a.judge_model],
+                          ed / "coverage.json", valid_coverage))
         if a.booookscore:
             cmd = [py, "-m", "scripts.booookscore_eval", summary,
                    "--output-file", str(ed / "booookscore.json"), "--model", a.judge_model]
@@ -625,6 +637,20 @@ def cmd_evaluate(a):
     cfg.update({"judge_model": a.judge_model, "judge_repeats": a.judge_repeats,
                 "bertscore": a.bertscore})
     save_json(base / "config.json", cfg)
+
+    if a.coverage:
+        refs = sorted({str(docs[r["doc"]]["reference"]) for r in runs.values()
+                       if r.get("status") == "ok" and r["doc"] in docs})
+        print(f"Extracting key points for {len(refs)} reference(s) (cached after the first time)...")
+
+        def extract(ref):
+            return subprocess.run([py, "-m", "scripts.keypoint_coverage", ref, "--extract-only",
+                                   "--model", a.judge_model], cwd=ROOT, env=ENV,
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace")
+        with ThreadPoolExecutor(max_workers=a.eval_workers) as pool:
+            for ref, proc in zip(refs, pool.map(extract, refs)):
+                if proc.returncode != 0:
+                    print(f"  key points FAILED for {ref}: {(proc.stderr or proc.stdout).strip()[-200:]}")
 
     print(f"{len(tasks)} evaluation tasks, {a.eval_workers} in parallel\n")
     failed = 0
@@ -740,6 +766,12 @@ def cell_metrics(base: Path, doc: str, method: str, recs: list) -> dict:
         if b and b.get("booookscore") is not None:
             bks.append(b["booookscore"])
     c["booookscore"] = mean(bks)
+    cov = []
+    for r in ok:
+        cv = load_json(base / "eval" / safe(doc) / f"{method}_r{r['rep']}" / "coverage.json")
+        if cv and cv.get("keypoint_coverage") is not None:
+            cov.append(cv["keypoint_coverage"])
+    c["kp_coverage"] = mean(cov)
     c["support_pct"] = mean(ground)
     c["not_supported_stmts"] = bad if ground else None
     c["grounding_incomplete"] = incomplete_ground
@@ -751,7 +783,7 @@ def cell_metrics(base: Path, doc: str, method: str, recs: list) -> dict:
 
 
 def macro(cells: list) -> dict:
-    keys = ["words", "len_ratio", "support_pct", "booookscore", "judge_overall_sd"] + STD_KEYS + EFF_KEYS + \
+    keys = ["words", "len_ratio", "support_pct", "booookscore", "kp_coverage", "judge_overall_sd"] + STD_KEYS + EFF_KEYS + \
         [f"judge_{k}" for k, _ in JUDGE_FIELDS]
     out = {k: mean([c.get(k) for c in cells]) for k in keys}
     for k in ("calls", "total_tokens", "llm_seconds", "runtime"):
@@ -765,14 +797,14 @@ def macro(cells: list) -> dict:
 def overall_table(L, methods, cell_groups, title):
     L.append(f"## {title}\n")
     L.append("| Method | Docs evaluated | R-1 | R-2 | R-Lsum | R-Lsum recall | BERTScore | BooookScore | "
-             "Grounding % | Semantic | Judge overall | Judge sd | Coverage | Emphasis | Alignment |")
-    L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+             "Key-point coverage | Grounding % | Semantic | Judge overall | Judge sd | Coverage | Emphasis | Alignment |")
+    L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for m in methods:
         mc = macro(cell_groups[m])
         L.append(f"| {label(m)} | {mc['docs_evaluated']}/{mc['docs']} | "
                  f"{f(mc['rouge_1_f1'], 3)} | {f(mc['rouge_2_f1'], 3)} | {f(mc['rouge_lsum_f1'], 3)} | "
                  f"{f(mc['rouge_lsum_recall'], 3)} | {f(mc['bertscore_f1'], 3)} | "
-                 f"{f(mc['booookscore'], 3)} | {f(mc['support_pct'], 1)} | "
+                 f"{f(mc['booookscore'], 3)} | {f(mc['kp_coverage'], 3)} | {f(mc['support_pct'], 1)} | "
                  f"{f(mc['semantic_similarity'], 3)} | {f(mc['judge_overall_score'])} | "
                  f"{f(mc['judge_overall_sd'])} | {f(mc['judge_coverage_score'])} | "
                  f"{f(mc['judge_emphasis_score'])} | {f(mc['judge_reference_alignment_score'])} |")
@@ -903,14 +935,15 @@ def cmd_report(a):
         c0 = table[(d, methods[0])]
         L.append(f"### {d}  ({c0.get('dataset')}, {f(c0.get('document_tokens'), 0)} tokens, "
                  f"target {f(c0.get('target_words'), 0)} words)\n")
-        L.append("| Method | Words | R-1 | R-2 | R-Lsum | Semantic | BooookScore | Grounding % | Not-supp. | "
+        L.append("| Method | Words | R-1 | R-2 | R-Lsum | Semantic | BooookScore | KP coverage | Grounding % | Not-supp. | "
                  "Judge overall (mean +-sd) | Cov | Emph | Align | Calls | Tokens |")
-        L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        L.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for m in methods:
             c = table[(d, m)]
             L.append(f"| {label(m)} | {f(c['words'], 0)} | {f(c['rouge_1_f1'], 3)} | "
                      f"{f(c['rouge_2_f1'], 3)} | {f(c['rouge_lsum_f1'], 3)} | "
-                     f"{f(c['semantic_similarity'], 3)} | {f(c['booookscore'], 3)} | {f(c['support_pct'], 1)} | "
+                     f"{f(c['semantic_similarity'], 3)} | {f(c['booookscore'], 3)} | {f(c['kp_coverage'], 3)} | "
+                     f"{f(c['support_pct'], 1)} | "
                      f"{'-' if c['not_supported_stmts'] is None else c['not_supported_stmts']} | "
                      f"{pm(c['judge_overall_score'], c['judge_overall_sd'])} | "
                      f"{f(c['judge_coverage_score'], 1)} | {f(c['judge_emphasis_score'], 1)} | "
@@ -1003,6 +1036,10 @@ def main():
     e.add_argument("--judge-model", default="deepseek/deepseek-v3.2")
     e.add_argument("--judge-repeats", type=int, default=3)
     e.add_argument("--skip-grounding", action="store_true")
+    e.add_argument("--language", default="english",
+                   help="language of the summaries/references (ROUGE tokenisation)")
+    e.add_argument("--coverage", action="store_true",
+                   help="also compute key-point coverage against the reference")
     e.add_argument("--booookscore", action="store_true",
                    help="also compute BooookScore (share of summary sentences without confusion)")
     e.add_argument("--booookscore-template", default=None,

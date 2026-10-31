@@ -1,4 +1,27 @@
+"""
+Prepare the three datasets of the paper as plain-text files + a manifest that
+compare_methods.py can run on (--manifest).
 
+    CaseSumm     HF "ChicagoHAI/CaseSumm" (columns citation / opinion / syllabus;
+                 only a train split exists -> a fixed-seed random sample is drawn)
+    EUR-Lex-Sum  HF "dennlinger/eur-lex-sum", config "english", split "test"
+                 (columns celex_id / reference / summary)
+    IN-Abs       Zenodo record 7152317 (download + unzip yourself), then pass
+                 --inabs-dir; the test split IN-Abs/test-data/{judgement,summary}
+                 is used
+
+Examples (run from the project root):
+
+    pip install datasets
+    python -m scripts.prepare_datasets --datasets casesumm,eurlexsum --n 30
+    python -m scripts.prepare_datasets --datasets inabs --inabs-dir ~/Downloads/dataset --n 30
+    python compare_methods.py generate --manifest data/datasets/manifest_all.jsonl \
+        --target-length reference --tag datasets_v1
+
+Every sample is drawn with a fixed --seed.  Put the ids you used while
+developing prompts into --exclude-file (one id per line) so they never enter
+the evaluation sample.
+"""
 import argparse
 import json
 import random
@@ -59,11 +82,11 @@ def load_casesumm():
             for i, r in enumerate(ds)]
 
 
-def load_eurlexsum(splits="test"):
+def load_eurlexsum(splits="test", lang="english"):
     from datasets import load_dataset
     rows = []
     for split in [x.strip() for x in splits.split(",") if x.strip()]:
-        ds = load_dataset("dennlinger/eur-lex-sum", "english", split=split, trust_remote_code=True)
+        ds = load_dataset("dennlinger/eur-lex-sum", lang, split=split, trust_remote_code=True)
         rows += [(safe_id(r["celex_id"]), r["reference"] or "", r["summary"] or "") for r in ds]
     return rows
 
@@ -97,20 +120,23 @@ def main():
                    help="EUR-Lex-Sum splits to sample from, e.g. test,validation,train "
                         "(all are unseen for training-free methods)")
     p.add_argument("--out-name", default="", help="manifest file name suffix (default: dataset name)")
+    p.add_argument("--eurlex-lang", default="english",
+                   help="EUR-Lex-Sum language config, e.g. german, french (24 languages)")
     a = p.parse_args()
 
     exclude = set()
     if a.exclude_file:
         exclude = {l.strip() for l in Path(a.exclude_file).read_text().splitlines() if l.strip()}
 
-    loaders = {"casesumm": load_casesumm, "eurlexsum": lambda: load_eurlexsum(a.eurlex_splits),
+    loaders = {"casesumm": load_casesumm, "eurlexsum": lambda: load_eurlexsum(a.eurlex_splits, a.eurlex_lang),
                "inabs": lambda: load_inabs(a.inabs_dir or sys.exit("--inabs-dir is required"))}
     all_rows = []
     for ds in [d.strip() for d in a.datasets.split(",") if d.strip()]:
         if ds not in loaders:
             sys.exit(f"unknown dataset {ds}")
         chosen = sample(loaders[ds](), a.n, a.seed, exclude, a.min_tokens, a.max_tokens)
-        rows = [write_pair(ds, i, t, s) for i, t, s in chosen]
+        folder = ds if not (ds == "eurlexsum" and a.eurlex_lang != "english") else f"eurlexsum_{a.eurlex_lang}"
+        rows = [write_pair(folder, i, t, s) for i, t, s in chosen]
         man = OUT / f"manifest_{a.out_name or ds}.jsonl"
         man.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
         toks = sorted(r["source_tokens"] for r in rows)

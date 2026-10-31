@@ -1,0 +1,17 @@
+Check which key points are stated in the summary below.
+
+SUMMARY:
+
+{{ summary }}
+
+KEY POINTS:
+
+{{ points }}
+
+For each key point decide:
+- "covered": the summary states it (wording may differ, meaning must be the same)
+- "partial": the summary states part of it, or only vaguely
+- "missing": the summary does not state it, or states something different
+
+Return ONLY a JSON list with one object per key point, in order:
+[{"id": 1, "label": "covered"}, {"id": 2, "label": "missing"}, ...]

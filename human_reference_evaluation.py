@@ -1,6 +1,25 @@
+"""
+Reference-based metrics for one generated summary.
 
+Fairness fixes compared with the previous version:
+  * SEMANTIC SIMILARITY: all-MiniLM-L6-v2 silently truncates its input to 256
+    word pieces, so the old score compared only the first ~150-200 words of
+    each 1000-word summary with the first ~200 words of the reference.  A
+    method whose summary happened to start with an overview was rewarded for
+    its first paragraph only.  The text is now split into sentences, every
+    sentence is embedded, and the (normalised) mean embedding of each text is
+    compared - nothing is cut off.
+  * Both texts are cleaned with the same function before scoring, so leftover
+    Markdown/list markers of one method cannot change its ROUGE.
+  * ROUGE-Lsum (the standard summary-level LCS for multi-sentence summaries),
+    precision and recall are reported in addition to F1.  With summaries much
+    longer than the reference, recall is the more informative number.
+  * Optional BERTScore (--bertscore), as listed in the paper.  A long-context
+    model is used by default so the text is not truncated at 512 tokens.
+"""
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -54,6 +73,8 @@ def main():
     parser.add_argument("--output-file", required=True)
     parser.add_argument("--semantic-model", default="sentence-transformers/all-MiniLM-L6-v2")
     parser.add_argument("--no-semantic", action="store_true", help="Skip semantic similarity")
+    parser.add_argument("--language", default="english",
+                        help="non-English: Unicode word tokens, no English stemmer (keeps umlauts etc.)")
     parser.add_argument("--bertscore", action="store_true", help="Also compute BERTScore")
     parser.add_argument("--bertscore-model", default="allenai/longformer-large-4096")
     args = parser.parse_args()
@@ -62,7 +83,16 @@ def main():
     summary = load_text(args.summary)
     ref_words, sum_words = count_words(reference), count_words(summary)
 
-    scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL", "rougeLsum"], use_stemmer=True)
+    if args.language.lower() in ("english", "en"):
+        scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL", "rougeLsum"], use_stemmer=True)
+    else:
+        # the default rouge-score tokenizer keeps only [a-z0-9]: it would split
+        # "Verordnung über" into "verordnung", "ber" and drop every umlaut
+        class UnicodeTokenizer:
+            def tokenize(self, text):
+                return re.findall(r"\w+", text.lower())
+        scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL", "rougeLsum"],
+                                          tokenizer=UnicodeTokenizer())
     # rougeLsum expects one sentence per line - apply the SAME splitting to both texts
     scores = scorer.score("\n".join(sentences_of(reference)), "\n".join(sentences_of(summary)))
 
@@ -73,6 +103,7 @@ def main():
         "human_reference_words": ref_words,
         "summary_words": sum_words,
         "length_ratio": round(sum_words / ref_words, 3) if ref_words else 0,
+        "language": args.language,
     }
     for key, name in [("rouge1", "rouge_1"), ("rouge2", "rouge_2"), ("rougeL", "rouge_l"),
                       ("rougeLsum", "rouge_lsum")]:

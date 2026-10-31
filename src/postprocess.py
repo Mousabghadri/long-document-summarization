@@ -1,5 +1,23 @@
+"""
+Post-processing shared by ALL summarization methods.
 
+Before this module existed every script had its own copy of the cleaning and
+truncation code, and the copies behaved differently (e.g. Sequential did not
+strip Markdown, SummN only stripped part of it, Sequential's truncation split
+on ". " and destroyed paragraphs, Key Sentences never compressed but Claims
+did).  Those differences changed the final summaries - and therefore the
+scores - for reasons that had nothing to do with the summarization strategy.
+
+finalize_summary() is the ONE length-control routine applied to the final
+output of every method:
+
+    1. clean formatting (same rules for everybody)
+    2. if longer than target * (1 + tolerance): one LLM compression call
+    3. if still longer than target: sentence-safe truncation
+"""
 from __future__ import annotations
+
+import os
 
 import re
 from pathlib import Path
@@ -13,7 +31,10 @@ LENGTH_TOLERANCE = 0.10
 
 
 def prompt_env() -> Environment:
-    return Environment(loader=FileSystemLoader(str(PROMPTS_DIR)))
+    env = Environment(loader=FileSystemLoader(str(PROMPTS_DIR)))
+    # SUMMARY_LANGUAGE (e.g. "German"): write every summary in that language
+    env.globals["output_language"] = os.getenv("SUMMARY_LANGUAGE", "").strip()
+    return env
 
 
 def count_words(text: str) -> int:
