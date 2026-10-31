@@ -1,49 +1,4 @@
-#!/usr/bin/env python3
-"""
-compare_methods.py - one driver for a FAIR comparison of the summarization
-strategies of the paper on the same documents:
 
-    direct, sequential, mapreduce, key_sentences (extract-support), claims, summn
-
-Run it from the project root.  Three resumable steps:
-
-    python compare_methods.py generate
-    python compare_methods.py evaluate
-    python compare_methods.py report
-
-Useful options:
-    --summary-words 1000       fixed target length (default 1000)
-    --target-length reference  target = length of each document's human reference
-                               (x --reference-ratio); recommended for datasets
-    --docs gdpr,dga            only some documents
-    --manifest m.jsonl         documents from a manifest (scripts/prepare_datasets.py)
-    --methods claims,summn     only some methods
-    --model openai/gpt-oss-120b  summarization model for this tag (else MODEL_NAME)
-    --reps 3                   generation repetitions
-    --judge-repeats 3          judge runs per summary
-    --skip-grounding           skip source-grounding verification
-    --bertscore                also compute BERTScore
-    --tag my_run               output folder: outputs/comparison/<tag>
-    --dry-run / --force
-
-What is controlled (and checked) for fairness:
-  * every method runs with the same model and the same generation settings
-    (temperature, seed, reasoning effort, output cap, provider pin) from
-    src/llm.py; the settings are stored with every run and the report flags
-    any run whose settings or prompt files differ from the others;
-  * same chunking (context size) for all chunk-based methods, same target
-    length, same final prompt guidance, same final length-control routine;
-  * Map-Reduce and SummN share stage-1 prompt/budget and merge prompt and
-    differ only in stage organisation;
-  * efficiency is measured identically for all methods: every API request
-    (including retries), prompt/completion/reasoning tokens, summed LLM
-    latency ("serial LLM time", independent of parallelism) and wall time;
-  * jobs run one at a time with rotating method order, each from an empty
-    output folder (no cached intermediate results);
-  * every summary is checked against its target length (+-10%), Direct is
-    flagged when the document had to be truncated, and the judge is repeated
-    so its own noise is visible.
-"""
 from __future__ import annotations
 
 import argparse

@@ -1,16 +1,4 @@
-"""
-Sanity checks on an evaluated tag (part of "double-check the implementation"):
 
-  * summary length vs target per method (a method that writes longer summaries
-    gets higher coverage/recall for free)
-  * how well the automatic metrics agree with the LLM judge, per summary
-    (Spearman correlation): does key-point coverage measure the same thing as
-    the judge's coverage score?
-  * coverage within length bands, to see whether a method still wins when
-    summaries have similar lengths
-
-    python -m scripts.analyze_tag full_models
-"""
 import json
 import re
 import statistics

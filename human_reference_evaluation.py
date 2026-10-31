@@ -1,22 +1,4 @@
-"""
-Reference-based metrics for one generated summary.
 
-Fairness fixes compared with the previous version:
-  * SEMANTIC SIMILARITY: all-MiniLM-L6-v2 silently truncates its input to 256
-    word pieces, so the old score compared only the first ~150-200 words of
-    each 1000-word summary with the first ~200 words of the reference.  A
-    method whose summary happened to start with an overview was rewarded for
-    its first paragraph only.  The text is now split into sentences, every
-    sentence is embedded, and the (normalised) mean embedding of each text is
-    compared - nothing is cut off.
-  * Both texts are cleaned with the same function before scoring, so leftover
-    Markdown/list markers of one method cannot change its ROUGE.
-  * ROUGE-Lsum (the standard summary-level LCS for multi-sentence summaries),
-    precision and recall are reported in addition to F1.  With summaries much
-    longer than the reference, recall is the more informative number.
-  * Optional BERTScore (--bertscore), as listed in the paper.  A long-context
-    model is used by default so the text is not truncated at 512 tokens.
-"""
 import argparse
 import json
 import re
